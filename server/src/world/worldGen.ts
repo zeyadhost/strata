@@ -80,6 +80,36 @@ export function generateWorld(seed: number): number[][] {
     }
   }
 
+  const valleyLeft  = new Array(WORLD_WIDTH).fill(false);
+  const valleyRight = new Array(WORLD_WIDTH).fill(false);
+
+  let runMin = heightmap[0];
+  for (let x = 0; x < WORLD_WIDTH; x++) {
+    if (heightmap[x] <= runMin + 2) {
+      runMin = heightmap[x];
+    } else {
+      valleyLeft[x] = true;
+    }
+  }
+
+  runMin = heightmap[WORLD_WIDTH - 1];
+  for (let x = WORLD_WIDTH - 1; x >= 0; x--) {
+    if (heightmap[x] <= runMin + 2) {
+      runMin = heightmap[x];
+    } else {
+      valleyRight[x] = true;
+    }
+  }
+
+  for (let x = 0; x < WORLD_WIDTH; x++) {
+    if (valleyLeft[x] && valleyRight[x]) {
+      const sy = heightmap[x];
+      if (tiles[sy]?.[x] === TileType.GRASS) {
+        tiles[sy][x] = TileType.DIRT;
+      }
+    }
+  }
+
   return tiles;
 }
 

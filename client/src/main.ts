@@ -5,6 +5,7 @@ import { GameScene } from "./scenes/GameScene";
 document.fonts.load("16px monogram").then(() => {
   new Phaser.Game({
     type: Phaser.AUTO,
+    pixelArt: true,
     backgroundColor: "#1a1a2e",
     scene: [BootScene, GameScene],
     parent: document.body,

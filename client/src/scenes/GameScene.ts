@@ -10,6 +10,7 @@ import {
   PLAYER_WIDTH,
   PLAYER_HEIGHT,
   TILE_TEXTURE,
+  ORE_GLOW,
 } from "../constants/world";
 
 const RENDER_BUFFER = 3;
@@ -24,10 +25,11 @@ export class GameScene extends Phaser.Scene {
   private worldReady = false;
   private pendingInit: WorldInitPayload | null = null;
 
-  private player!: Phaser.Physics.Arcade.Sprite;
+  private player!: Phaser.GameObjects.Rectangle;
   private otherPlayers = new Map<string, Phaser.GameObjects.Rectangle>();
 
   private tileSprites = new Map<number, Phaser.Physics.Arcade.Image>();
+  private tileGlows = new Map<number, Phaser.GameObjects.Rectangle>();
   private tileGroup!: Phaser.Physics.Arcade.StaticGroup;
   private lastViewLeft = -999;
   private lastViewTop  = -999;
@@ -52,21 +54,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image("tile_grass",  "/tiles/grass.png");
-    this.load.image("tile_dirt",   "/tiles/dirt.png");
-    this.load.image("tile_stone",  "/tiles/stone.png");
-    this.load.image("gem_coal",    "/gems/coal.png");
+    this.load.image("tile_grass", "/tiles/grass.png");
+    this.load.image("tile_dirt", "/tiles/dirt.png");
+    this.load.image("tile_stone", "/tiles/stone.png");
+    this.load.image("gem_coal", "/gems/coal.png");
     this.load.image("gem_emerald", "/gems/emerald.png");
     this.load.image("gem_diamond", "/gems/diamond.png");
   }
 
   create() {
-    const gfx = this.add.graphics();
-    gfx.fillStyle(0x44aaff);
-    gfx.fillRect(0, 0, PLAYER_WIDTH, PLAYER_HEIGHT);
-    gfx.generateTexture("player", PLAYER_WIDTH, PLAYER_HEIGHT);
-    gfx.destroy();
-
     this.tileGroup = this.physics.add.staticGroup();
 
     this.cursors = this.input.keyboard!.createCursorKeys();
@@ -100,19 +96,20 @@ export class GameScene extends Phaser.Scene {
       if (!this.tiles[change.y]) return;
       this.tiles[change.y][change.x] = change.type;
 
-      const key    = change.y * WORLD_WIDTH + change.x;
-      const sprite = this.tileSprites.get(key);
-      if (sprite) {
-        this.tileGroup.remove(sprite, true, true);
-        this.tileSprites.delete(key);
-      }
+      this.invalidateTileSprite(change.x, change.y);
+      this.invalidateTileSprite(change.x - 1, change.y + 1);
+      this.invalidateTileSprite(change.x + 1, change.y + 1);
+
+      this.lastViewLeft = -999;
+      this.lastViewTop  = -999;
     });
 
     this.socket.on("player:joined", (p: PlayerState) => this.spawnOtherPlayer(p));
 
     this.socket.on("player:state", (p: PlayerState) => {
-      const rect = this.otherPlayers.get(p.id);
-      if (rect) rect.setPosition(p.x, p.y);
+      const sprite = this.otherPlayers.get(p.id);
+      if (!sprite) return;
+      sprite.setPosition(p.x, p.y);
     });
 
     this.socket.on("player:left", ({ id }: { id: string }) => {
@@ -154,11 +151,17 @@ export class GameScene extends Phaser.Scene {
   }
 
   private initPlayer() {
-    this.player = this.physics.add.sprite(this.spawnX, this.spawnY, "player");
-    (this.player.body as Phaser.Physics.Arcade.Body).setSize(PLAYER_WIDTH, PLAYER_HEIGHT);
-    this.player.setCollideWorldBounds(false);
+    this.player = this.add.rectangle(this.spawnX, this.spawnY, PLAYER_WIDTH, PLAYER_HEIGHT, this.getPlayerColor(this.socket.id ?? "local"));
+    this.player.setStrokeStyle(2, 0x0f172a, 0.9);
+    this.player.setDepth(10);
+    this.physics.add.existing(this.player);
+    const body = this.player.body as Phaser.Physics.Arcade.Body;
+    body.setSize(PLAYER_WIDTH, PLAYER_HEIGHT);
+    body.setOffset(0, 0);
+    body.setCollideWorldBounds(false);
 
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH * TILE_SIZE, WORLD_HEIGHT * TILE_SIZE);
+    this.cameras.main.setRoundPixels(true);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
     this.physics.add.collider(this.player, this.tileGroup);
@@ -168,8 +171,48 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnOtherPlayer(p: PlayerState) {
-    const rect = this.add.rectangle(p.x, p.y, PLAYER_WIDTH, PLAYER_HEIGHT, 0xff6644) as Phaser.GameObjects.Rectangle;
-    this.otherPlayers.set(p.id, rect);
+    const sprite = this.add.rectangle(p.x, p.y, PLAYER_WIDTH, PLAYER_HEIGHT, this.getPlayerColor(p.id));
+    sprite.setStrokeStyle(2, 0x0f172a, 0.9);
+    sprite.setDepth(10);
+    this.otherPlayers.set(p.id, sprite);
+  }
+
+  private getPlayerColor(id: string): number {
+    let hash = 0;
+    for (let index = 0; index < id.length; index++) {
+      hash = ((hash << 5) - hash + id.charCodeAt(index)) | 0;
+    }
+
+    const hue = Math.abs(hash) % 360;
+    const color = Phaser.Display.Color.HSLToColor(hue / 360, 0.75, 0.58);
+    return Phaser.Display.Color.GetColor(color.red, color.green, color.blue);
+  }
+
+  private invalidateTileSprite(tx: number, ty: number) {
+    if (tx < 0 || tx >= WORLD_WIDTH || ty < 0 || ty >= WORLD_HEIGHT) return;
+    const key = ty * WORLD_WIDTH + tx;
+    const sprite = this.tileSprites.get(key);
+    if (!sprite) return;
+    this.tileGroup.remove(sprite, true, true);
+    this.tileSprites.delete(key);
+    this.tileGlows.get(key)?.destroy();
+    this.tileGlows.delete(key);
+  }
+
+  private isSolidTile(tx: number, ty: number): boolean {
+    return this.tiles[ty]?.[tx] !== undefined && this.tiles[ty][tx] !== TileType.AIR;
+  }
+
+  private getTileTextureKey(tx: number, ty: number, tileType: TileType): string | undefined {
+    if (tileType === TileType.GRASS) {
+      const aboveLeft = this.isSolidTile(tx - 1, ty - 1);
+      const aboveRight = this.isSolidTile(tx + 1, ty - 1);
+      if (aboveLeft && aboveRight) {
+        return TILE_TEXTURE[TileType.DIRT];
+      }
+    }
+
+    return TILE_TEXTURE[tileType];
   }
 
   private updateViewport(force = false) {
@@ -191,6 +234,8 @@ export class GameScene extends Phaser.Scene {
       if (tx < vl || tx >= vr || ty < vt || ty >= vb) {
         this.tileGroup.remove(sprite, true, true);
         this.tileSprites.delete(key);
+        this.tileGlows.get(key)?.destroy();
+        this.tileGlows.delete(key);
       }
     }
 
@@ -202,7 +247,7 @@ export class GameScene extends Phaser.Scene {
         if (tileType === TileType.AIR) continue;
         const key = ty * WORLD_WIDTH + tx;
         if (this.tileSprites.has(key)) continue;
-        const textureKey = TILE_TEXTURE[tileType];
+        const textureKey = this.getTileTextureKey(tx, ty, tileType);
         if (!textureKey) continue;
         const px = tx * TILE_SIZE + TILE_SIZE / 2;
         const py = ty * TILE_SIZE + TILE_SIZE / 2;
@@ -211,6 +256,15 @@ export class GameScene extends Phaser.Scene {
         sprite.refreshBody();
         this.tileGroup.add(sprite);
         this.tileSprites.set(key, sprite);
+
+        const glowColor = ORE_GLOW[tileType];
+        if (glowColor != null) {
+          const glow = this.add.rectangle(px, py, TILE_SIZE, TILE_SIZE);
+          glow.setStrokeStyle(2, glowColor, 0.6);
+          glow.setFillStyle(glowColor, 0.08);
+          glow.setDepth(sprite.depth + 1);
+          this.tileGlows.set(key, glow);
+        }
       }
     }
   }
@@ -247,10 +301,8 @@ export class GameScene extends Phaser.Scene {
 
     if (left) {
       body.setVelocityX(-PLAYER_SPEED);
-      this.player.setFlipX(true);
     } else if (right) {
       body.setVelocityX(PLAYER_SPEED);
-      this.player.setFlipX(false);
     } else {
       body.setVelocityX(0);
     }
@@ -266,7 +318,7 @@ export class GameScene extends Phaser.Scene {
       this.socket.emit("player:move", {
         x: this.player.x,
         y: this.player.y,
-        flipX: this.player.flipX,
+        flipX: false,
       });
       this.moveTimer = 0;
     }
