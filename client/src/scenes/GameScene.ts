@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { Socket } from "socket.io-client";
+import { ProceduralAudioManager } from "../ProceduralAudioManager";
 import { TileType, TileChange, PlayerState, WorldInitPayload } from "../types";
 import { loadSettings, saveSettings, type GameSettings } from "../settings";
 import { SettingsMenu } from "../ui/SettingsMenu";
@@ -19,6 +20,12 @@ const RENDER_BUFFER = 3;
 const DIG_RANGE     = 2;
 const MOVE_INTERVAL = 50;
 const CURSOR_DEFAULT = "url('/cursors/cursor-24.png') 1 1, auto";
+const HUD_BASE_FONT_SIZE = 18;
+const HUD_BASE_MARGIN = 16;
+const HUD_BASE_PADDING_X = 6;
+const HUD_BASE_PADDING_Y = 4;
+const HUD_FOV_MIN = 0.75;
+const HUD_FOV_MAX = 2;
 
 export class GameScene extends Phaser.Scene {
   private socket!: Socket;
@@ -32,6 +39,7 @@ export class GameScene extends Phaser.Scene {
   private player!: Phaser.GameObjects.Rectangle;
   private otherPlayers = new Map<string, Phaser.GameObjects.Rectangle>();
   private settingsMenu!: SettingsMenu;
+  private audioManager!: ProceduralAudioManager;
 
   private tileSprites = new Map<number, Phaser.Physics.Arcade.Image>();
   private tileGlows = new Map<number, Phaser.GameObjects.Rectangle>();
@@ -49,8 +57,9 @@ export class GameScene extends Phaser.Scene {
   private moveTimer = 0;
   private digRepeatTimer = 0;
   private pointerMining = false;
+  private wasGrounded = false;
   private loadingText!: Phaser.GameObjects.Text;
-  private coordsText!: Phaser.GameObjects.Text;
+  private coordsText!: HTMLDivElement;
 
   constructor() {
     super({ key: "GameScene" });
@@ -73,6 +82,7 @@ export class GameScene extends Phaser.Scene {
   create() {
     this.tileGroup = this.physics.add.staticGroup();
     this.input.setDefaultCursor(CURSOR_DEFAULT);
+    this.audioManager = new ProceduralAudioManager(this.settings);
 
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.wasd = {
@@ -86,14 +96,31 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0);
 
-    this.coordsText = this.add
-      .text(16, 16, "", { fontFamily: "monogram", fontSize: "18px", color: "#f7f1d5", backgroundColor: "#0b1020cc", padding: { x: 6, y: 4 } })
-      .setScrollFactor(0)
-      .setDepth(200);
+    this.coordsText = document.createElement("div");
+    this.coordsText.className = "strata-coords-hud";
+    Object.assign(this.coordsText.style, {
+      position: "fixed",
+      left: `${HUD_BASE_MARGIN}px`,
+      top: `${HUD_BASE_MARGIN}px`,
+      zIndex: "900",
+      pointerEvents: "none",
+      fontFamily: "monogram, monospace",
+      fontSize: `${HUD_BASE_FONT_SIZE}px`,
+      lineHeight: "1",
+      color: "#f7f1d5",
+      background: "rgba(11, 16, 32, 0.8)",
+      padding: `${HUD_BASE_PADDING_Y}px ${HUD_BASE_PADDING_X}px`,
+      textTransform: "uppercase",
+      whiteSpace: "pre",
+      imageRendering: "pixelated",
+      display: this.settings.showCoordinates ? "block" : "none",
+    } satisfies Partial<CSSStyleDeclaration>);
+    document.body.appendChild(this.coordsText);
 
     this.input.on("pointerdown", this.onPointerDown, this);
     this.input.on("pointerup", this.onPointerUp, this);
     this.input.on("gameout", this.onPointerUp, this);
+    this.input.keyboard?.on("keydown", this.onAnyKeyDown, this);
 
     this.settingsMenu = new SettingsMenu(this.settings, {
       onApply: (settings) => {
@@ -104,7 +131,10 @@ export class GameScene extends Phaser.Scene {
 
     this.applySettings(this.settings);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.input.keyboard?.off("keydown", this.onAnyKeyDown, this);
+      this.audioManager.destroy();
       this.settingsMenu.destroy();
+      this.coordsText.remove();
     });
 
     this.registerSocketEvents();
@@ -187,6 +217,7 @@ export class GameScene extends Phaser.Scene {
     body.setSize(PLAYER_WIDTH, PLAYER_HEIGHT);
     body.setOffset(0, 0);
     body.setCollideWorldBounds(false);
+    this.wasGrounded = false;
 
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH * TILE_SIZE, WORLD_HEIGHT * TILE_SIZE);
     this.cameras.main.setRoundPixels(true);
@@ -209,11 +240,16 @@ export class GameScene extends Phaser.Scene {
 
   private applySettings(settings: GameSettings) {
     this.settings = { ...settings };
+    this.audioManager?.setSettings(this.settings);
     this.settingsMenu?.setSettings(this.settings);
     this.sound.setVolume(this.settings.masterVolume / 100);
     this.cameras.main.setZoom(this.settings.fov);
     this.cameras.main.setRoundPixels(this.settings.pixelSnap);
-    this.coordsText?.setVisible(this.settings.showCoordinates);
+    if (this.coordsText) {
+      this.coordsText.style.display = this.settings.showCoordinates ? "block" : "none";
+    }
+    this.updateHudLayout();
+    this.updateCoordinatesText();
 
     for (const sprite of this.otherPlayers.values()) {
       sprite.setVisible(this.settings.showOtherPlayers);
@@ -329,10 +365,16 @@ export class GameScene extends Phaser.Scene {
     if (dy < 0 && Math.abs(dy) > 1) return;
     if (this.tiles[ty]?.[tx] === TileType.AIR) return;
 
+    this.audioManager.playDig(pointer.worldX, this.player.x);
     this.socket.emit("tile:dig", { x: tx, y: ty });
   }
 
+  private onAnyKeyDown() {
+    void this.audioManager.unlock();
+  }
+
   private onPointerDown(pointer: Phaser.Input.Pointer) {
+    void this.audioManager.unlock();
     this.pointerMining = this.settings.holdToMine;
     this.digRepeatTimer = 0;
     this.handleDig(pointer);
@@ -348,7 +390,29 @@ export class GameScene extends Phaser.Scene {
 
     const tx = Math.floor(this.player.x / TILE_SIZE);
     const ty = Math.floor(this.player.y / TILE_SIZE);
-    this.coordsText.setText(`X ${tx}  Y ${ty}  DEPTH ${ty}`);
+    this.coordsText.textContent = `X ${tx}  Y ${ty}  DEPTH ${ty}`;
+  }
+
+  private updateHudLayout() {
+    if (!this.coordsText) return;
+
+    const normalizedFov = Phaser.Math.Clamp(
+      (this.settings.fov - HUD_FOV_MIN) / (HUD_FOV_MAX - HUD_FOV_MIN),
+      0,
+      1,
+    );
+    const hudScale = Phaser.Math.Linear(0.85, 1.6, normalizedFov);
+    const fontSize = Math.round(HUD_BASE_FONT_SIZE * hudScale);
+    const margin = Math.round(HUD_BASE_MARGIN * hudScale);
+    const paddingX = Math.round(HUD_BASE_PADDING_X * hudScale);
+    const paddingY = Math.round(HUD_BASE_PADDING_Y * hudScale);
+
+    Object.assign(this.coordsText.style, {
+      left: `${margin}px`,
+      top: `${margin}px`,
+      fontSize: `${fontSize}px`,
+      padding: `${paddingY}px ${paddingX}px`,
+    } satisfies Partial<CSSStyleDeclaration>);
   }
 
   private snapCameraToPixels() {
@@ -363,6 +427,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.worldReady || !this.player) return;
 
     const body  = this.player.body as Phaser.Physics.Arcade.Body;
+    const grounded = body.blocked.down || body.touching.down;
 
     if (this.settingsMenu.isOpen()) {
       body.setVelocityX(0);
@@ -388,6 +453,7 @@ export class GameScene extends Phaser.Scene {
 
     if (jump && body.blocked.down) {
       body.setVelocityY(PLAYER_JUMP_VEL);
+      this.audioManager.playJump(this.player.x, this.player.x);
     }
 
     if (this.pointerMining && this.settings.holdToMine) {
@@ -401,6 +467,12 @@ export class GameScene extends Phaser.Scene {
     this.snapCameraToPixels();
     this.updateViewport();
     this.updateCoordinatesText();
+
+    const landed = !this.wasGrounded && grounded && body.velocity.y >= 0;
+    if (landed) {
+      this.audioManager.playLand(this.player.x, this.player.x, Math.abs(body.velocity.y));
+    }
+    this.wasGrounded = grounded;
 
     this.moveTimer += delta;
     if (this.moveTimer >= MOVE_INTERVAL) {

@@ -23,6 +23,11 @@ export class SettingsMenu {
   private readonly categoryButtons = new Map<CategoryKey, HTMLButtonElement>();
   private readonly sections = new Map<CategoryKey, HTMLElement>();
   private readonly resizeHandler = () => this.updateResponsiveLayout();
+  private readonly documentPointerHandler = (event: PointerEvent) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || target.closest(".strata-settings__select-wrap")) return;
+    this.closeDropdowns();
+  };
 
   constructor(initial: GameSettings, options: SettingsMenuOptions) {
     this.current = { ...initial };
@@ -115,6 +120,7 @@ export class SettingsMenu {
     document.body.appendChild(this.container);
 
     window.addEventListener("resize", this.resizeHandler);
+    document.addEventListener("pointerdown", this.documentPointerHandler);
     this.updateResponsiveLayout();
   }
 
@@ -139,6 +145,7 @@ export class SettingsMenu {
 
   destroy() {
     window.removeEventListener("resize", this.resizeHandler);
+    document.removeEventListener("pointerdown", this.documentPointerHandler);
     this.styleTag.remove();
     this.container.remove();
   }
@@ -309,23 +316,55 @@ export class SettingsMenu {
     const selectWrap = document.createElement("div");
     selectWrap.className = "strata-settings__select-wrap";
 
-    const select = document.createElement("select");
-    select.name = String(name);
-    select.className = "strata-settings__select";
-    select.style.cursor = this.pointerCursor;
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = String(name);
 
-    for (const option of options) {
-      const element = document.createElement("option");
-      element.value = option.value;
-      element.textContent = option.label;
-      select.appendChild(element);
-    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "strata-settings__select";
+    button.dataset.selectButtonFor = String(name);
+    button.style.cursor = this.pointerCursor;
+
+    const valueLabel = document.createElement("span");
+    valueLabel.className = "strata-settings__select-value";
+    valueLabel.dataset.selectValueFor = String(name);
 
     const arrow = document.createElement("span");
     arrow.className = "strata-settings__select-arrow";
     arrow.textContent = "v";
 
-    selectWrap.append(select, arrow);
+    button.append(valueLabel, arrow);
+
+    const menu = document.createElement("div");
+    menu.className = "strata-settings__select-menu";
+    menu.dataset.selectMenuFor = String(name);
+
+    for (const option of options) {
+      const optionButton = document.createElement("button");
+      optionButton.type = "button";
+      optionButton.className = "strata-settings__select-option";
+      optionButton.dataset.value = option.value;
+      optionButton.textContent = option.label;
+      optionButton.style.cursor = this.pointerCursor;
+      optionButton.addEventListener("click", () => {
+        input.value = option.value;
+        valueLabel.textContent = option.label;
+        button.dataset.value = option.value;
+        this.updateDropdownSelection(String(name));
+        this.closeDropdowns();
+      });
+      menu.appendChild(optionButton);
+    }
+
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const isOpen = selectWrap.dataset.open === "true";
+      this.closeDropdowns();
+      selectWrap.dataset.open = isOpen ? "false" : "true";
+    });
+
+    selectWrap.append(input, button, menu);
     row.control.appendChild(selectWrap);
     return row.element;
   }
@@ -386,6 +425,24 @@ export class SettingsMenu {
     text.textContent = checked ? "Enabled" : "Disabled";
   }
 
+  private closeDropdowns() {
+    for (const element of this.contentArea.querySelectorAll<HTMLElement>(".strata-settings__select-wrap")) {
+      element.dataset.open = "false";
+    }
+  }
+
+  private updateDropdownSelection(name: string) {
+    const input = this.contentArea.querySelector<HTMLInputElement>(`.strata-settings__select-wrap [name='${name}']`);
+    if (!input) return;
+
+    const wrap = input.closest<HTMLElement>(".strata-settings__select-wrap");
+    if (!wrap) return;
+
+    for (const option of wrap.querySelectorAll<HTMLElement>(".strata-settings__select-option")) {
+      option.dataset.selected = option.dataset.value === input.value ? "true" : "false";
+    }
+  }
+
   private syncInputs(settings: GameSettings) {
     for (const input of this.contentArea.querySelectorAll<HTMLInputElement | HTMLSelectElement>("input, select")) {
       const name = input.name as keyof GameSettings;
@@ -395,6 +452,16 @@ export class SettingsMenu {
       if (input instanceof HTMLInputElement && input.type === "range") {
         this.updateSliderState(input);
       }
+    }
+
+    for (const input of this.contentArea.querySelectorAll<HTMLInputElement>("input[type='hidden']")) {
+      const name = input.name;
+      const label = this.contentArea.querySelector<HTMLElement>(`[data-select-value-for='${name}']`);
+      const option = this.contentArea.querySelector<HTMLElement>(`.strata-settings__select-option[data-value='${input.value}']`);
+      if (label && option) {
+        label.textContent = option.textContent;
+      }
+      this.updateDropdownSelection(name);
     }
 
     this.setToggleState("pixelSnap", settings.pixelSnap);
@@ -561,6 +628,8 @@ export class SettingsMenu {
         overflow: auto;
         padding: 18px;
         background: linear-gradient(180deg, #182548 0%, #0d1631 38%, #091124 100%);
+        scrollbar-width: thin;
+        scrollbar-color: #4066bb #081126;
         box-shadow:
           inset 0 0 0 2px #324f95,
           inset 0 0 0 6px #0b1532,
@@ -923,11 +992,14 @@ export class SettingsMenu {
       }
 
       .strata-settings__select {
-        appearance: none;
         width: 100%;
         min-height: 44px;
-        padding: 10px 42px 10px 12px;
+        padding: 10px 12px;
         border: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
         background: linear-gradient(180deg, #223862 0%, #142345 100%);
         color: #f8f0d0;
         box-shadow:
@@ -936,6 +1008,62 @@ export class SettingsMenu {
           0 0 0 2px rgba(243, 234, 204, 0.18);
         font-size: 15px;
         font-weight: 700;
+      }
+
+      .strata-settings__select-value {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .strata-settings__select-menu {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(100% + 6px);
+        z-index: 20;
+        display: none;
+        padding: 6px;
+        background: linear-gradient(180deg, #1a2a54 0%, #10203f 100%);
+        box-shadow:
+          inset 0 0 0 2px #4168c3,
+          inset 0 0 0 4px #0b1531,
+          0 0 0 2px #f0e6c3,
+          0 6px 0 #091127;
+      }
+
+      .strata-settings__select-wrap[data-open='true'] .strata-settings__select-menu {
+        display: grid;
+        gap: 4px;
+      }
+
+      .strata-settings__select-wrap[data-open='true'] .strata-settings__select {
+        filter: brightness(1.08);
+      }
+
+      .strata-settings__select-option {
+        width: 100%;
+        min-height: 36px;
+        border: 0;
+        padding: 8px 10px;
+        text-align: left;
+        background: linear-gradient(180deg, #142345 0%, #0e1933 100%);
+        color: #f8f0d0;
+        box-shadow:
+          inset 0 0 0 2px #2e4f90,
+          inset 0 0 0 4px #081126;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .strata-settings__select-option:hover,
+      .strata-settings__select-option[data-selected='true'] {
+        background: linear-gradient(180deg, #3d61b8 0%, #274689 100%);
+        color: #fff6d8;
+        box-shadow:
+          inset 0 0 0 2px #7d9af0,
+          inset 0 0 0 4px #162b5f;
       }
 
       .strata-settings__select-arrow {
@@ -956,6 +1084,29 @@ export class SettingsMenu {
         gap: 12px;
         margin-top: 18px;
         flex-wrap: wrap;
+      }
+
+      .strata-settings__panel::-webkit-scrollbar {
+        width: 14px;
+      }
+
+      .strata-settings__panel::-webkit-scrollbar-track {
+        background: #081126;
+        box-shadow:
+          inset 0 0 0 2px #050b18,
+          inset 0 0 0 4px #142345;
+      }
+
+      .strata-settings__panel::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, #4a72cc 0%, #2e4e98 100%);
+        box-shadow:
+          inset 0 0 0 2px #86a3ef,
+          inset 0 0 0 4px #17305f,
+          0 0 0 2px #f0e6c3;
+      }
+
+      .strata-settings__panel::-webkit-scrollbar-corner {
+        background: #081126;
       }
 
       .strata-settings__action {
