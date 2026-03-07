@@ -16,6 +16,7 @@ import {
 const RENDER_BUFFER = 3;
 const DIG_RANGE     = 2;
 const MOVE_INTERVAL = 50;
+const CURSOR_DEFAULT = "url('/cursors/cursor-24.png') 1 1, auto";
 
 export class GameScene extends Phaser.Scene {
   private socket!: Socket;
@@ -64,6 +65,7 @@ export class GameScene extends Phaser.Scene {
 
   create() {
     this.tileGroup = this.physics.add.staticGroup();
+    this.input.setDefaultCursor(CURSOR_DEFAULT);
 
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.wasd = {

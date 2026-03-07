@@ -12,6 +12,8 @@ export class BootScene extends Phaser.Scene {
   }
 
   create() {
+    this.input.setDefaultCursor("url('/cursors/pointer-24.png') 1 1, auto");
+
     this.add
       .text(this.scale.width / 2, this.scale.height / 2 - 60, "STRATA", { fontFamily: FONTS.header, fontSize: "48px", color: "#e0e0e0" })
       .setOrigin(0.5);
