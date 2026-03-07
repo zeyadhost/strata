@@ -1,6 +1,8 @@
 import Phaser from "phaser";
 import { Socket } from "socket.io-client";
 import { TileType, TileChange, PlayerState, WorldInitPayload } from "../types";
+import { loadSettings, saveSettings, type GameSettings } from "../settings";
+import { SettingsMenu } from "../ui/SettingsMenu";
 import {
   TILE_SIZE,
   WORLD_WIDTH,
@@ -23,11 +25,13 @@ export class GameScene extends Phaser.Scene {
   private tiles: number[][] = [];
   private spawnX = 0;
   private spawnY = 0;
+  private settings: GameSettings = loadSettings();
   private worldReady = false;
   private pendingInit: WorldInitPayload | null = null;
 
   private player!: Phaser.GameObjects.Rectangle;
   private otherPlayers = new Map<string, Phaser.GameObjects.Rectangle>();
+  private settingsMenu!: SettingsMenu;
 
   private tileSprites = new Map<number, Phaser.Physics.Arcade.Image>();
   private tileGlows = new Map<number, Phaser.GameObjects.Rectangle>();
@@ -43,7 +47,10 @@ export class GameScene extends Phaser.Scene {
   };
 
   private moveTimer = 0;
+  private digRepeatTimer = 0;
+  private pointerMining = false;
   private loadingText!: Phaser.GameObjects.Text;
+  private coordsText!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: "GameScene" });
@@ -79,7 +86,26 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setScrollFactor(0);
 
-    this.input.on("pointerdown", this.handleDig, this);
+    this.coordsText = this.add
+      .text(16, 16, "", { fontFamily: "monogram", fontSize: "18px", color: "#f7f1d5", backgroundColor: "#0b1020cc", padding: { x: 6, y: 4 } })
+      .setScrollFactor(0)
+      .setDepth(200);
+
+    this.input.on("pointerdown", this.onPointerDown, this);
+    this.input.on("pointerup", this.onPointerUp, this);
+    this.input.on("gameout", this.onPointerUp, this);
+
+    this.settingsMenu = new SettingsMenu(this.settings, {
+      onApply: (settings) => {
+        saveSettings(settings);
+        this.applySettings(settings);
+      },
+    });
+
+    this.applySettings(this.settings);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.settingsMenu.destroy();
+    });
 
     this.registerSocketEvents();
 
@@ -169,6 +195,7 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.collider(this.player, this.tileGroup);
     this.createWorldBarriers();
 
+    this.applySettings(this.settings);
     this.updateViewport(true);
   }
 
@@ -176,7 +203,21 @@ export class GameScene extends Phaser.Scene {
     const sprite = this.add.rectangle(p.x, p.y, PLAYER_WIDTH, PLAYER_HEIGHT, this.getPlayerColor(p.id));
     sprite.setStrokeStyle(2, 0x0f172a, 0.9);
     sprite.setDepth(10);
+    sprite.setVisible(this.settings.showOtherPlayers);
     this.otherPlayers.set(p.id, sprite);
+  }
+
+  private applySettings(settings: GameSettings) {
+    this.settings = { ...settings };
+    this.settingsMenu?.setSettings(this.settings);
+    this.sound.setVolume(this.settings.masterVolume / 100);
+    this.cameras.main.setZoom(this.settings.fov);
+    this.cameras.main.setRoundPixels(this.settings.pixelSnap);
+    this.coordsText?.setVisible(this.settings.showCoordinates);
+
+    for (const sprite of this.otherPlayers.values()) {
+      sprite.setVisible(this.settings.showOtherPlayers);
+    }
   }
 
   private getPlayerColor(id: string): number {
@@ -291,10 +332,46 @@ export class GameScene extends Phaser.Scene {
     this.socket.emit("tile:dig", { x: tx, y: ty });
   }
 
+  private onPointerDown(pointer: Phaser.Input.Pointer) {
+    this.pointerMining = this.settings.holdToMine;
+    this.digRepeatTimer = 0;
+    this.handleDig(pointer);
+  }
+
+  private onPointerUp() {
+    this.pointerMining = false;
+    this.digRepeatTimer = 0;
+  }
+
+  private updateCoordinatesText() {
+    if (!this.player || !this.settings.showCoordinates) return;
+
+    const tx = Math.floor(this.player.x / TILE_SIZE);
+    const ty = Math.floor(this.player.y / TILE_SIZE);
+    this.coordsText.setText(`X ${tx}  Y ${ty}  DEPTH ${ty}`);
+  }
+
+  private snapCameraToPixels() {
+    if (!this.settings.pixelSnap) return;
+
+    const camera = this.cameras.main;
+    camera.scrollX = Math.round(camera.scrollX);
+    camera.scrollY = Math.round(camera.scrollY);
+  }
+
   update(_time: number, delta: number) {
     if (!this.worldReady || !this.player) return;
 
     const body  = this.player.body as Phaser.Physics.Arcade.Body;
+
+    if (this.settingsMenu.isOpen()) {
+      body.setVelocityX(0);
+      this.pointerMining = false;
+      this.updateCoordinatesText();
+      this.snapCameraToPixels();
+      return;
+    }
+
     const left  = this.cursors.left.isDown  || this.wasd.left.isDown;
     const right = this.cursors.right.isDown || this.wasd.right.isDown;
     const jump  =
@@ -313,7 +390,17 @@ export class GameScene extends Phaser.Scene {
       body.setVelocityY(PLAYER_JUMP_VEL);
     }
 
+    if (this.pointerMining && this.settings.holdToMine) {
+      this.digRepeatTimer += delta;
+      if (this.digRepeatTimer >= 140) {
+        this.handleDig(this.input.activePointer);
+        this.digRepeatTimer = 0;
+      }
+    }
+
+    this.snapCameraToPixels();
     this.updateViewport();
+    this.updateCoordinatesText();
 
     this.moveTimer += delta;
     if (this.moveTimer >= MOVE_INTERVAL) {
