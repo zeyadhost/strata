@@ -393,6 +393,25 @@ export class GameScene extends Phaser.Scene {
     this.coordsText.textContent = `X ${tx}  Y ${ty}  DEPTH ${ty}`;
   }
 
+  private getSurfaceTileForMusic(grounded: boolean): TileType | null {
+    if (!this.player) return null;
+
+    const tx = Math.floor(this.player.x / TILE_SIZE);
+    const footTy = Math.floor((this.player.y + PLAYER_HEIGHT * 0.5 + 2) / TILE_SIZE);
+    const bodyTy = Math.floor(this.player.y / TILE_SIZE);
+    const candidateTiles = grounded
+      ? [this.tiles[footTy]?.[tx], this.tiles[bodyTy]?.[tx]]
+      : [this.tiles[bodyTy]?.[tx], this.tiles[footTy]?.[tx]];
+
+    for (const tileType of candidateTiles) {
+      if (tileType === TileType.GRASS || tileType === TileType.DIRT) {
+        return tileType;
+      }
+    }
+
+    return null;
+  }
+
   private updateHudLayout() {
     if (!this.coordsText) return;
 
@@ -433,6 +452,10 @@ export class GameScene extends Phaser.Scene {
       body.setVelocityX(0);
       this.pointerMining = false;
       this.updateCoordinatesText();
+      this.audioManager.updateMusic({
+        depth: Math.floor(this.player.y / TILE_SIZE),
+        surfaceTile: this.getSurfaceTileForMusic(grounded),
+      }, delta);
       this.snapCameraToPixels();
       return;
     }
@@ -467,6 +490,10 @@ export class GameScene extends Phaser.Scene {
     this.snapCameraToPixels();
     this.updateViewport();
     this.updateCoordinatesText();
+    this.audioManager.updateMusic({
+      depth: Math.floor(this.player.y / TILE_SIZE),
+      surfaceTile: this.getSurfaceTileForMusic(grounded),
+    }, delta);
 
     const landed = !this.wasGrounded && grounded && body.velocity.y >= 0;
     if (landed) {

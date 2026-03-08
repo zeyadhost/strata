@@ -1,17 +1,36 @@
 import type { GameSettings } from "./settings";
+import { TileType } from "./types";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
+
+type MusicTrackKey = "xnor" | "sorcery" | "haul";
+
+interface MusicState {
+  depth: number;
+  surfaceTile: TileType | null;
+}
+
+interface ManagedTrack {
+  audio: HTMLAudioElement;
+  baseVolume: number;
+  currentMix: number;
+  targetMix: number;
+}
+
+const LOOP_FADE_PER_SECOND = 0.2;
+const ONE_SHOT_FADE_PER_SECOND = 0.35;
 
 export class ProceduralAudioManager {
   private context: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private ambienceGain: GainNode | null = null;
   private sfxGain: GainNode | null = null;
-  private ambienceStarted = false;
-  private ambienceOscillators: OscillatorNode[] = [];
-  private ambiencePanners: StereoPannerNode[] = [];
+  private musicUnlocked = false;
+  private musicTracks: Partial<Record<MusicTrackKey, ManagedTrack>> = {};
+  private activeOneShotTrack: MusicTrackKey | null = null;
+  private sorceryArmed = true;
   private settings: GameSettings;
 
   constructor(initialSettings: GameSettings) {
@@ -28,8 +47,26 @@ export class ProceduralAudioManager {
     if (context.state === "suspended") {
       await context.resume();
     }
-    this.ensureAmbience();
+    this.musicUnlocked = true;
+    this.ensureMusicTracks();
     this.syncMix();
+  }
+
+  updateMusic(state: MusicState, deltaMs: number) {
+    this.ensureMusicTracks();
+
+    if (state.depth <= 50) {
+      this.sorceryArmed = true;
+    }
+
+    const desiredLoopTrack = this.getDesiredLoopTrack(state);
+    if (this.activeOneShotTrack === null && desiredLoopTrack === "xnor" && state.depth > 50 && this.sorceryArmed) {
+      this.startSorceryOneShot();
+      this.sorceryArmed = false;
+    }
+
+    this.applyDesiredTrackMixes(desiredLoopTrack);
+    this.stepMusicMixes(deltaMs / 1000);
   }
 
   playDig(sourceX: number, listenerX: number) {
@@ -100,14 +137,16 @@ export class ProceduralAudioManager {
   }
 
   destroy() {
-    for (const oscillator of this.ambienceOscillators) {
-      oscillator.stop();
-      oscillator.disconnect();
+    for (const track of Object.values(this.musicTracks)) {
+      if (!track) continue;
+      track.audio.pause();
+      track.audio.currentTime = 0;
+      track.audio.src = "";
     }
 
-    this.ambienceOscillators = [];
-    this.ambiencePanners = [];
-    this.ambienceStarted = false;
+    this.musicTracks = {};
+    this.activeOneShotTrack = null;
+    this.musicUnlocked = false;
 
     if (this.context) {
       void this.context.close();
@@ -144,77 +183,20 @@ export class ProceduralAudioManager {
     return context;
   }
 
-  private ensureAmbience() {
-    if (this.ambienceStarted) return;
-
-    const context = this.ensureContext();
-    const ambienceGain = this.ambienceGain;
-    if (!ambienceGain) return;
-
-    const leftOscillator = context.createOscillator();
-    const rightOscillator = context.createOscillator();
-    const leftGain = context.createGain();
-    const rightGain = context.createGain();
-
-    leftOscillator.type = "sine";
-    leftOscillator.frequency.value = 64;
-    rightOscillator.type = "triangle";
-    rightOscillator.frequency.value = 96;
-    rightOscillator.detune.value = 4;
-
-    leftGain.gain.value = 0.65;
-    rightGain.gain.value = 0.35;
-
-    const leftPanner = typeof context.createStereoPanner === "function" ? context.createStereoPanner() : null;
-    const rightPanner = typeof context.createStereoPanner === "function" ? context.createStereoPanner() : null;
-
-    if (leftPanner) {
-      leftPanner.pan.value = -0.22;
-      leftOscillator.connect(leftGain);
-      leftGain.connect(leftPanner);
-      leftPanner.connect(ambienceGain);
-      this.ambiencePanners.push(leftPanner);
-    } else {
-      leftOscillator.connect(leftGain);
-      leftGain.connect(ambienceGain);
-    }
-
-    if (rightPanner) {
-      rightPanner.pan.value = 0.22;
-      rightOscillator.connect(rightGain);
-      rightGain.connect(rightPanner);
-      rightPanner.connect(ambienceGain);
-      this.ambiencePanners.push(rightPanner);
-    } else {
-      rightOscillator.connect(rightGain);
-      rightGain.connect(ambienceGain);
-    }
-
-    leftOscillator.start();
-    rightOscillator.start();
-
-    this.ambienceOscillators.push(leftOscillator, rightOscillator);
-    this.ambienceStarted = true;
-    this.syncMix();
-  }
-
   private syncMix() {
     if (this.masterGain) {
       this.masterGain.gain.value = this.settings.masterVolume / 100;
     }
 
     if (this.ambienceGain) {
-      this.ambienceGain.gain.value = (this.settings.ambienceVolume / 100) * 0.08;
+      this.ambienceGain.gain.value = 0;
     }
 
     if (this.sfxGain) {
       this.sfxGain.gain.value = 1;
     }
 
-    for (const panner of this.ambiencePanners) {
-      const sign = panner.pan.value < 0 ? -1 : 1;
-      panner.pan.value = this.settings.outputMode === "stereo" ? 0.22 * sign : 0;
-    }
+    this.syncMusicVolumes();
   }
 
   private getSfxLevel(scale: number) {
@@ -256,5 +238,119 @@ export class ProceduralAudioManager {
     oscillator.start();
     oscillator.stop(stopAt);
     oscillator.onended = cleanup;
+  }
+
+  private ensureMusicTracks() {
+    if (this.musicTracks.xnor && this.musicTracks.sorcery && this.musicTracks.haul) {
+      return;
+    }
+
+    this.musicTracks.xnor ??= this.createMusicTrack("/music/xnor.ogg", true, 0.72);
+    this.musicTracks.sorcery ??= this.createMusicTrack("/music/sorcery.ogg", false, 0.88);
+    this.musicTracks.haul ??= this.createMusicTrack("/music/haul.ogg", true, 0.62);
+    this.syncMusicVolumes();
+  }
+
+  private createMusicTrack(src: string, loop: boolean, baseVolume: number): ManagedTrack {
+    const audio = new Audio(src);
+    audio.loop = loop;
+    audio.preload = "auto";
+    audio.volume = 0;
+    return {
+      audio,
+      baseVolume,
+      currentMix: 0,
+      targetMix: 0,
+    };
+  }
+
+  private getDesiredLoopTrack(state: MusicState): MusicTrackKey | null {
+    if (state.surfaceTile === TileType.GRASS || state.surfaceTile === TileType.DIRT) {
+      return "haul";
+    }
+
+    if (state.depth > 40) {
+      return "xnor";
+    }
+
+    return null;
+  }
+
+  private startSorceryOneShot() {
+    const sorcery = this.musicTracks.sorcery;
+    if (!sorcery) return;
+
+    this.activeOneShotTrack = "sorcery";
+    sorcery.audio.currentTime = 0;
+    sorcery.targetMix = 1;
+    sorcery.audio.onended = () => {
+      sorcery.currentMix = 0;
+      sorcery.targetMix = 0;
+      sorcery.audio.currentTime = 0;
+      this.activeOneShotTrack = null;
+      this.syncMusicVolumes();
+    };
+    this.ensureTrackPlayback("sorcery");
+  }
+
+  private applyDesiredTrackMixes(desiredLoopTrack: MusicTrackKey | null) {
+    for (const [key, track] of Object.entries(this.musicTracks) as Array<[MusicTrackKey, ManagedTrack | undefined]>) {
+      if (!track) continue;
+
+      if (key === "sorcery") {
+        if (this.activeOneShotTrack !== "sorcery") {
+          track.targetMix = 0;
+        }
+        continue;
+      }
+
+      track.targetMix = this.activeOneShotTrack === null && key === desiredLoopTrack ? 1 : 0;
+    }
+  }
+
+  private stepMusicMixes(deltaSeconds: number) {
+    const loopStep = deltaSeconds * LOOP_FADE_PER_SECOND;
+    const oneShotStep = deltaSeconds * ONE_SHOT_FADE_PER_SECOND;
+
+    for (const [key, track] of Object.entries(this.musicTracks) as Array<[MusicTrackKey, ManagedTrack | undefined]>) {
+      if (!track) continue;
+
+      const fadeStep = key === "sorcery" ? oneShotStep : loopStep;
+      if (track.targetMix > track.currentMix) {
+        track.currentMix = Math.min(track.targetMix, track.currentMix + fadeStep);
+      } else if (track.targetMix < track.currentMix) {
+        track.currentMix = Math.max(track.targetMix, track.currentMix - fadeStep);
+      }
+
+      if (track.currentMix > 0.001 && track.targetMix > 0) {
+        this.ensureTrackPlayback(key);
+      }
+
+      if (track.currentMix <= 0.001 && track.targetMix === 0 && !track.audio.paused) {
+        track.audio.pause();
+        if (key !== "sorcery") {
+          track.audio.currentTime = 0;
+        }
+      }
+    }
+
+    this.syncMusicVolumes();
+  }
+
+  private ensureTrackPlayback(key: MusicTrackKey) {
+    if (!this.musicUnlocked) return;
+
+    const track = this.musicTracks[key];
+    if (!track || !track.audio.paused) return;
+
+    void track.audio.play().catch(() => undefined);
+  }
+
+  private syncMusicVolumes() {
+    const musicLevel = (this.settings.masterVolume / 100) * (this.settings.ambienceVolume / 100);
+    for (const track of Object.values(this.musicTracks)) {
+      if (!track) continue;
+      track.audio.volume = clamp(track.baseVolume * track.currentMix * musicLevel, 0, 1);
+    }
   }
 }
