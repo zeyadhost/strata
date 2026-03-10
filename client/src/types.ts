@@ -14,6 +14,21 @@ export interface TileChange {
   type: TileType;
 }
 
+export type InventoryKey = "coal" | "emerald" | "diamond";
+
+export type InventoryState = Record<InventoryKey, number>;
+
+export interface InventoryUpdatePayload {
+  inventory: InventoryState;
+}
+
+export interface OreCollectedPayload {
+  item: InventoryKey;
+  amount: number;
+  x: number;
+  y: number;
+}
+
 export interface PlayerState {
   id: string;
   x: number;
@@ -26,4 +41,5 @@ export interface WorldInitPayload {
   spawnX: number;
   spawnY: number;
   players: PlayerState[];
+  inventory: InventoryState;
 }

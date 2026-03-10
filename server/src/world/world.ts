@@ -1,6 +1,11 @@
 import { TileType, WORLD_WIDTH, WORLD_HEIGHT, TileChange } from "../types";
 import { generateWorld, findSpawn } from "./worldGen";
 
+export interface DigResult {
+  change: TileChange;
+  minedType: TileType;
+}
+
 export class World {
   readonly tiles: number[][];
   readonly spawnX: number;
@@ -24,10 +29,14 @@ export class World {
     return this.tiles[y][x];
   }
 
-  digTile(x: number, y: number): TileChange | null {
+  digTile(x: number, y: number): DigResult | null {
     if (!this.isInBounds(x, y)) return null;
-    if (this.tiles[y][x] === TileType.AIR) return null;
+    const minedType = this.tiles[y][x];
+    if (minedType === TileType.AIR) return null;
     this.tiles[y][x] = TileType.AIR;
-    return { x, y, type: TileType.AIR };
+    return {
+      change: { x, y, type: TileType.AIR },
+      minedType,
+    };
   }
 }

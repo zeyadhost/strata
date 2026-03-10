@@ -1,8 +1,10 @@
 import Phaser from "phaser";
 import { Socket } from "socket.io-client";
 import { ProceduralAudioManager } from "../ProceduralAudioManager";
-import { TileType, TileChange, PlayerState, WorldInitPayload } from "../types";
+import { InventoryState, OreCollectedPayload, TileType, TileChange, PlayerState, WorldInitPayload } from "../types";
 import { loadSettings, saveSettings, type GameSettings } from "../settings";
+import { InventoryPanel } from "../ui/InventoryPanel";
+import { HotbarPanel, type HotbarSlotKey } from "../ui/HotbarPanel";
 import { SettingsMenu } from "../ui/SettingsMenu";
 import {
   TILE_SIZE,
@@ -26,6 +28,7 @@ const HUD_BASE_PADDING_X = 6;
 const HUD_BASE_PADDING_Y = 4;
 const HUD_FOV_MIN = 0.75;
 const HUD_FOV_MAX = 2;
+const HOTBAR_BASE_BOTTOM = 18;
 
 export class GameScene extends Phaser.Scene {
   private socket!: Socket;
@@ -60,6 +63,14 @@ export class GameScene extends Phaser.Scene {
   private wasGrounded = false;
   private loadingText!: Phaser.GameObjects.Text;
   private coordsText!: HTMLDivElement;
+  private inventoryPanel!: InventoryPanel;
+  private hotbarPanel!: HotbarPanel;
+  private activeHotbarSlot: HotbarSlotKey = "main-pickaxe";
+  private inventory: InventoryState = {
+    coal: 0,
+    emerald: 0,
+    diamond: 0,
+  };
 
   constructor() {
     super({ key: "GameScene" });
@@ -117,6 +128,17 @@ export class GameScene extends Phaser.Scene {
     } satisfies Partial<CSSStyleDeclaration>);
     document.body.appendChild(this.coordsText);
 
+    this.inventoryPanel = new InventoryPanel({
+      onVisibilityChange: (isOpen) => {
+        this.hotbarPanel?.setActiveSlot(isOpen ? "inventory" : this.activeHotbarSlot);
+      },
+    });
+    this.inventoryPanel.setInventory(this.inventory);
+    this.hotbarPanel = new HotbarPanel({
+      onSelect: (slot) => this.handleHotbarSelect(slot),
+    });
+    this.hotbarPanel.setActiveSlot(this.activeHotbarSlot);
+
     this.input.on("pointerdown", this.onPointerDown, this);
     this.input.on("pointerup", this.onPointerUp, this);
     this.input.on("gameout", this.onPointerUp, this);
@@ -135,6 +157,8 @@ export class GameScene extends Phaser.Scene {
       this.audioManager.destroy();
       this.settingsMenu.destroy();
       this.coordsText.remove();
+      this.inventoryPanel.destroy();
+      this.hotbarPanel.destroy();
     });
 
     this.registerSocketEvents();
@@ -162,6 +186,15 @@ export class GameScene extends Phaser.Scene {
       this.lastViewTop  = -999;
     });
 
+    this.socket.on("inventory:update", ({ inventory }: { inventory: InventoryState }) => {
+      this.inventory = { ...inventory };
+      this.inventoryPanel.setInventory(this.inventory);
+    });
+
+    this.socket.on("ore:collected", (payload: OreCollectedPayload) => {
+      this.showOrePickupText(payload);
+    });
+
     this.socket.on("player:joined", (p: PlayerState) => this.spawnOtherPlayer(p));
 
     this.socket.on("player:state", (p: PlayerState) => {
@@ -180,9 +213,11 @@ export class GameScene extends Phaser.Scene {
     this.tiles  = payload.tiles;
     this.spawnX = payload.spawnX;
     this.spawnY = payload.spawnY;
+    this.inventory = { ...payload.inventory };
 
     this.loadingText.destroy();
     this.initPlayer();
+    this.inventoryPanel.setInventory(this.inventory);
 
     for (const p of payload.players) this.spawnOtherPlayer(p);
 
@@ -369,11 +404,27 @@ export class GameScene extends Phaser.Scene {
     this.socket.emit("tile:dig", { x: tx, y: ty });
   }
 
-  private onAnyKeyDown() {
+  private onAnyKeyDown(event: KeyboardEvent) {
     void this.audioManager.unlock();
+
+    if (event.code === "Digit1") {
+      this.handleHotbarSelect("main-pickaxe");
+    }
+
+    if (event.code === "Digit2") {
+      this.handleHotbarSelect("secondary-pickaxe");
+    }
+
+    if (event.code === "Backquote") {
+      this.handleHotbarSelect("inventory");
+    }
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer) {
+    if (this.settingsMenu.isOpen() || this.inventoryPanel.isOpen()) {
+      return;
+    }
+
     void this.audioManager.unlock();
     this.pointerMining = this.settings.holdToMine;
     this.digRepeatTimer = 0;
@@ -383,6 +434,57 @@ export class GameScene extends Phaser.Scene {
   private onPointerUp() {
     this.pointerMining = false;
     this.digRepeatTimer = 0;
+  }
+
+  private handleHotbarSelect(slot: HotbarSlotKey) {
+    if (slot === "inventory") {
+      this.inventoryPanel.toggle();
+      this.hotbarPanel.setActiveSlot(this.inventoryPanel.isOpen() ? "inventory" : this.activeHotbarSlot);
+      return;
+    }
+
+    this.activeHotbarSlot = slot;
+    if (this.inventoryPanel.isOpen()) {
+      this.inventoryPanel.close();
+    }
+    this.hotbarPanel.setActiveSlot(this.activeHotbarSlot);
+  }
+
+  private showOrePickupText(payload: OreCollectedPayload) {
+    const oreName = payload.item.toUpperCase();
+    const pickupText = this.add.text(
+      payload.x * TILE_SIZE + TILE_SIZE / 2,
+      payload.y * TILE_SIZE + TILE_SIZE + 8,
+      `+${payload.amount} ${oreName}`,
+      {
+        fontFamily: "monogram",
+        fontSize: "18px",
+        color: "#f7f1d5",
+        stroke: "#0b1020",
+        strokeThickness: 4,
+      },
+    );
+    pickupText.setOrigin(0.5);
+    pickupText.setDepth(30);
+    pickupText.setAlpha(0);
+
+    this.tweens.add({
+      targets: pickupText,
+      y: pickupText.y - 28,
+      alpha: { from: 0, to: 1 },
+      ease: "Cubic.Out",
+      duration: 180,
+      onComplete: () => {
+        this.tweens.add({
+          targets: pickupText,
+          y: pickupText.y - 18,
+          alpha: 0,
+          ease: "Cubic.In",
+          duration: 550,
+          onComplete: () => pickupText.destroy(),
+        });
+      },
+    });
   }
 
   private updateCoordinatesText() {
@@ -432,6 +534,17 @@ export class GameScene extends Phaser.Scene {
       fontSize: `${fontSize}px`,
       padding: `${paddingY}px ${paddingX}px`,
     } satisfies Partial<CSSStyleDeclaration>);
+
+    this.inventoryPanel.setLayout({
+      fontSize,
+      paddingX,
+      paddingY,
+    });
+
+    this.hotbarPanel.setLayout({
+      bottom: Math.round(HOTBAR_BASE_BOTTOM * hudScale),
+      fontSize,
+    });
   }
 
   private snapCameraToPixels() {
@@ -448,7 +561,7 @@ export class GameScene extends Phaser.Scene {
     const body  = this.player.body as Phaser.Physics.Arcade.Body;
     const grounded = body.blocked.down || body.touching.down;
 
-    if (this.settingsMenu.isOpen()) {
+    if (this.settingsMenu.isOpen() || this.inventoryPanel.isOpen()) {
       body.setVelocityX(0);
       this.pointerMining = false;
       this.updateCoordinatesText();
