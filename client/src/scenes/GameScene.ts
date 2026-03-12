@@ -6,7 +6,7 @@ import { loadSettings, saveSettings, type GameSettings } from "../settings";
 import { InventoryPanel } from "../ui/InventoryPanel";
 import { HotbarPanel, type HotbarSlotKey } from "../ui/HotbarPanel";
 import { SettingsMenu } from "../ui/SettingsMenu";
-import { DEFAULT_EQUIPPED_PICKAXES } from "../constants/pickaxes";
+import { DEFAULT_PRIMARY_PICKAXE } from "../constants/pickaxes";
 import {
   TILE_SIZE,
   WORLD_WIDTH,
@@ -45,6 +45,15 @@ const ORE_FLIGHT_SIZE = 28;
 const ORE_MAGNET_BASE_SPEED = 92;
 const ORE_MAGNET_SPEED_GAIN = 1.45;
 const ORE_FLIGHT_DURATION_MS = 420;
+
+const PICKAXE_TEXTURE_KEY = "pickaxe_equipped";
+const PICKAXE_DEPTH = 11;
+const PICKAXE_SIZE = 20;
+const PICKAXE_OFFSET_X = 9;
+const PICKAXE_OFFSET_Y = 2;
+const PICKAXE_IDLE_ANGLE = 25;
+const PICKAXE_SWING_RAISED = -20;
+const PICKAXE_SWING_HIT = 55;
 
 const BREAK_CRACK_PATHS: Array<Array<[number, number]>> = [
   [[8, 1], [7, 4], [8, 7], [6, 10], [4, 15]],
@@ -176,6 +185,11 @@ export class GameScene extends Phaser.Scene {
   private breakEffectStage = -1;
   private pendingDigTiles = new Set<number>();
   private oreDrops = new Map<string, OreDropState>();
+  private pickaxeSprite: Phaser.GameObjects.Image | null = null;
+  private pickaxeSwingTween: Phaser.Tweens.Tween | null = null;
+  private pickaxeBaseScale = 1;
+  private facingLeft = false;
+  private lastSwingFacingLeft: boolean | null = null;
   private inventory: InventoryState = createEmptyInventoryState();
 
   constructor() {
@@ -203,6 +217,7 @@ export class GameScene extends Phaser.Scene {
     for (const key of INVENTORY_KEYS) {
       this.load.image(gemTextureKey(key), gemAssetPath(key));
     }
+    this.load.image(PICKAXE_TEXTURE_KEY, DEFAULT_PRIMARY_PICKAXE.texture);
   }
 
   create() {
@@ -260,13 +275,14 @@ export class GameScene extends Phaser.Scene {
       onSelect: (slot) => this.handleHotbarSelect(slot),
     });
     this.hotbarPanel.setSlotVisual("main-pickaxe", {
-      title: DEFAULT_EQUIPPED_PICKAXES.primary.shortName,
-      accentColor: DEFAULT_EQUIPPED_PICKAXES.primary.accentColor,
+      title: DEFAULT_PRIMARY_PICKAXE.shortName,
+      accentColor: DEFAULT_PRIMARY_PICKAXE.accentColor,
       compact: true,
+      icon: DEFAULT_PRIMARY_PICKAXE.texture,
     });
     this.hotbarPanel.setSlotVisual("secondary-pickaxe", {
-      title: DEFAULT_EQUIPPED_PICKAXES.secondary.shortName,
-      accentColor: DEFAULT_EQUIPPED_PICKAXES.secondary.accentColor,
+      title: "Empty",
+      accentColor: "#5f6674",
       compact: true,
     });
     this.hotbarPanel.setActiveSlot(this.activeHotbarSlot);
@@ -293,6 +309,9 @@ export class GameScene extends Phaser.Scene {
       this.hotbarPanel.destroy();
       this.clearOreDrops();
       this.breakEffect.destroy();
+      this.pickaxeSwingTween?.stop();
+      this.pickaxeSprite?.destroy();
+      this.pickaxeSprite = null;
     });
 
     this.registerSocketEvents();
@@ -412,6 +431,7 @@ export class GameScene extends Phaser.Scene {
     this.createWorldBarriers();
 
     this.applySettings(this.settings);
+    this.initPickaxe();
     this.updateViewport(true);
   }
 
@@ -594,6 +614,86 @@ export class GameScene extends Phaser.Scene {
     }, ORE_FLIGHT_DURATION_MS + 20);
   }
 
+  private pickaxeAngle(angle: number) {
+    return this.facingLeft ? -angle : angle;
+  }
+
+  private hasEquippedPickaxe() {
+    return this.activeHotbarSlot === "main-pickaxe";
+  }
+
+  private syncHeldPickaxeVisibility() {
+    if (!this.pickaxeSprite) {
+      return;
+    }
+
+    const isVisible = this.hasEquippedPickaxe();
+    this.pickaxeSprite.setVisible(isVisible);
+    if (!isVisible) {
+      this.pickaxeSwingTween?.stop();
+      this.pickaxeSwingTween = null;
+    }
+  }
+
+  private initPickaxe() {
+    this.pickaxeSprite?.destroy();
+    this.pickaxeSwingTween?.stop();
+    this.pickaxeSwingTween = null;
+    const sideX = this.facingLeft ? -PICKAXE_OFFSET_X : PICKAXE_OFFSET_X;
+    this.pickaxeSprite = this.add.image(
+      this.player.x + sideX,
+      this.player.y + PICKAXE_OFFSET_Y,
+      PICKAXE_TEXTURE_KEY,
+    );
+    this.pickaxeSprite.setDisplaySize(PICKAXE_SIZE, PICKAXE_SIZE);
+    this.pickaxeBaseScale = this.pickaxeSprite.scaleX;
+    this.pickaxeSprite.setDepth(PICKAXE_DEPTH);
+    this.pickaxeSprite.setOrigin(0.75, 0.75);
+    this.pickaxeSprite.setAngle(this.pickaxeAngle(PICKAXE_IDLE_ANGLE));
+    this.syncHeldPickaxeVisibility();
+  }
+
+  private updatePickaxe() {
+    if (!this.pickaxeSprite || !this.player) return;
+
+    if (!this.hasEquippedPickaxe()) {
+      this.pickaxeSprite.setVisible(false);
+      return;
+    }
+
+    this.pickaxeSprite.setVisible(true);
+    const sideX = this.facingLeft ? -PICKAXE_OFFSET_X : PICKAXE_OFFSET_X;
+    this.pickaxeSprite.setPosition(this.player.x + sideX, this.player.y + PICKAXE_OFFSET_Y);
+    this.pickaxeSprite.scaleX = this.facingLeft ? -this.pickaxeBaseScale : this.pickaxeBaseScale;
+  }
+
+  private startPickaxeSwingLoop() {
+    if (!this.pickaxeSprite || !this.hasEquippedPickaxe()) return;
+    this.pickaxeSwingTween?.stop();
+    this.lastSwingFacingLeft = this.facingLeft;
+    this.pickaxeSprite.setAngle(this.pickaxeAngle(PICKAXE_SWING_RAISED));
+    this.pickaxeSwingTween = this.tweens.add({
+      targets: this.pickaxeSprite,
+      angle: this.pickaxeAngle(PICKAXE_SWING_HIT),
+      ease: "Cubic.InOut",
+      duration: 150,
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  private tweenPickaxeIdle() {
+    if (!this.pickaxeSprite || !this.hasEquippedPickaxe()) return;
+    this.pickaxeSwingTween?.stop();
+    this.lastSwingFacingLeft = null;
+    this.pickaxeSwingTween = this.tweens.add({
+      targets: this.pickaxeSprite,
+      angle: this.pickaxeAngle(PICKAXE_IDLE_ANGLE),
+      ease: "Cubic.Out",
+      duration: 200,
+    });
+  }
+
   private invalidateTileSprite(tx: number, ty: number) {
     if (tx < 0 || tx >= WORLD_WIDTH || ty < 0 || ty >= WORLD_HEIGHT) return;
     const key = ty * WORLD_WIDTH + tx;
@@ -708,6 +808,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleDig(pointer: Phaser.Input.Pointer) {
+    if (!this.hasEquippedPickaxe()) {
+      this.clearBreakTarget();
+      return;
+    }
+
     const target = this.getDigTarget(pointer);
     if (!target) {
       this.clearBreakTarget();
@@ -724,6 +829,7 @@ export class GameScene extends Phaser.Scene {
     this.updateBreakEffectStage(0);
     this.audioManager.playDigHit(target.x * TILE_SIZE + TILE_SIZE / 2, this.player.x, 0);
     this.spawnBreakParticles(target, 3, 0.45);
+    this.startPickaxeSwingLoop();
   }
 
   private ensureBreakTextureAtlas() {
@@ -915,6 +1021,7 @@ export class GameScene extends Phaser.Scene {
     this.breakElapsedMs = 0;
     this.breakEffectStage = -1;
     this.breakEffect.setVisible(false);
+    this.tweenPickaxeIdle();
   }
 
   private updateBreakEffectStage(progress: number) {
@@ -1011,6 +1118,7 @@ export class GameScene extends Phaser.Scene {
     if (this.inventoryPanel.isOpen()) {
       this.inventoryPanel.close();
     }
+    this.syncHeldPickaxeVisibility();
     this.hotbarPanel.setActiveSlot(this.activeHotbarSlot);
   }
 
@@ -1126,6 +1234,11 @@ export class GameScene extends Phaser.Scene {
     const grounded = body.blocked.down || body.touching.down;
 
     this.updateOreDrops(delta);
+    this.updatePickaxe();
+
+    if (this.breakTarget && this.lastSwingFacingLeft !== null && this.lastSwingFacingLeft !== this.facingLeft) {
+      this.startPickaxeSwingLoop();
+    }
 
     if (this.settingsMenu.isOpen() || this.inventoryPanel.isOpen()) {
       body.setVelocityX(0);
@@ -1147,8 +1260,10 @@ export class GameScene extends Phaser.Scene {
       Phaser.Input.Keyboard.JustDown(this.wasd.up);
 
     if (left) {
+      this.facingLeft = true;
       body.setVelocityX(-PLAYER_SPEED);
     } else if (right) {
+      this.facingLeft = false;
       body.setVelocityX(PLAYER_SPEED);
     } else {
       body.setVelocityX(0);

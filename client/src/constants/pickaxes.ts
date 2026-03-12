@@ -3,9 +3,9 @@ import type { InventoryKey } from "../types";
 
 export type PickaxeId =
   | "wooden-pickaxe"
-  | "copper-pickaxe"
+  | "stone-pickaxe"
   | "iron-pickaxe"
-  | "steel-pickaxe"
+  | "gold-pickaxe"
   | "diamond-pickaxe";
 
 interface PickaxeDataEntry {
@@ -16,6 +16,7 @@ interface PickaxeDataEntry {
   tier: number;
   miningSpeed: number;
   oreAccess: InventoryKey[];
+  texture: string;
 }
 
 interface PickaxeVisual {
@@ -30,25 +31,16 @@ export interface PickaxeDefinition {
   tier: number;
   miningSpeed: number;
   oreAccess: InventoryKey[];
+  texture: string;
   accentColor: string;
 }
 
 const PICKAXE_VISUALS: Record<PickaxeId, PickaxeVisual> = {
-  "wooden-pickaxe": {
-    accentColor: "#8dd17f",
-  },
-  "copper-pickaxe": {
-    accentColor: "#d89063",
-  },
-  "iron-pickaxe": {
-    accentColor: "#c9d4e3",
-  },
-  "steel-pickaxe": {
-    accentColor: "#9fb3d9",
-  },
-  "diamond-pickaxe": {
-    accentColor: "#7de5ff",
-  },
+  "wooden-pickaxe": { accentColor: "#8dd17f" },
+  "stone-pickaxe": { accentColor: "#b0b0b0" },
+  "iron-pickaxe": { accentColor: "#c9d4e3" },
+  "gold-pickaxe": { accentColor: "#ffcf5e" },
+  "diamond-pickaxe": { accentColor: "#7de5ff" },
 };
 
 const PICKAXE_DATA = pickaxeData as PickaxeDataEntry[];
@@ -56,16 +48,10 @@ const PICKAXE_DATA = pickaxeData as PickaxeDataEntry[];
 export const PICKAXE_DEFINITIONS = Object.fromEntries(
   PICKAXE_DATA.map((entry) => [
     entry.id,
-    {
-      ...entry,
-      ...PICKAXE_VISUALS[entry.id],
-    },
+    { ...entry, ...PICKAXE_VISUALS[entry.id] },
   ]),
 ) as Record<PickaxeId, PickaxeDefinition>;
 
 export const PICKAXE_LIST = PICKAXE_DATA.map((entry) => PICKAXE_DEFINITIONS[entry.id]);
 
-export const DEFAULT_EQUIPPED_PICKAXES = {
-  primary: PICKAXE_DEFINITIONS["wooden-pickaxe"],
-  secondary: PICKAXE_DEFINITIONS["iron-pickaxe"],
-};
+export const DEFAULT_PRIMARY_PICKAXE = PICKAXE_DEFINITIONS["wooden-pickaxe"];

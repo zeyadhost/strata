@@ -8,6 +8,7 @@ type HotbarSlotVisual = {
   accentColor?: string;
   badge?: string;
   compact?: boolean;
+  icon?: string;
 };
 
 type HotbarLayout = {
@@ -32,6 +33,7 @@ export class HotbarPanel {
   private readonly slotKeys = new Map<HotbarSlotKey, HTMLSpanElement>();
   private readonly slotCopies = new Map<HotbarSlotKey, HTMLSpanElement>();
   private readonly slotBadges = new Map<HotbarSlotKey, HTMLSpanElement>();
+  private readonly slotIcons = new Map<HotbarSlotKey, HTMLImageElement>();
   private readonly pulseTimers = new Map<HotbarSlotKey, number>();
 
   constructor(options: HotbarPanelOptions) {
@@ -71,8 +73,19 @@ export class HotbarPanel {
       badge.className = "strata-gui__slot-tier";
       badge.style.display = "none";
 
+      const icon = document.createElement("img");
+      icon.className = "strata-gui__slot-icon";
+      icon.alt = "";
+      icon.style.display = "none";
+      Object.assign(icon.style, {
+        width: "24px",
+        height: "24px",
+        imageRendering: "pixelated",
+        objectFit: "contain",
+      });
+
       labels.append(title, copy);
-      media.append(labels);
+      media.append(icon, labels);
       button.append(bind, media, badge);
 
       button.addEventListener("click", () => options.onSelect(config.key));
@@ -81,6 +94,7 @@ export class HotbarPanel {
       this.slotKeys.set(config.key, bind);
       this.slotCopies.set(config.key, copy);
       this.slotBadges.set(config.key, badge);
+      this.slotIcons.set(config.key, icon);
       dock.appendChild(button);
     }
 
@@ -126,6 +140,14 @@ export class HotbarPanel {
 
     button.style.setProperty("--slot-accent", visual.accentColor ?? "#f4d679");
     button.dataset.compact = visual.compact ? "true" : "false";
+
+    const icon = this.slotIcons.get(slot)!;
+    if (visual.icon) {
+      icon.src = visual.icon;
+      icon.style.display = "block";
+    } else {
+      icon.style.display = "none";
+    }
 
     const bind = this.slotKeys.get(slot)!;
     bind.style.display = "inline";
