@@ -254,6 +254,10 @@ export function ensureStrataGuiTheme() {
         0 5px 0 #172751;
     }
 
+    .strata-gui__slot[data-collect='true'] {
+      animation: strata-slot-collect 360ms cubic-bezier(0.2, 0.9, 0.22, 1);
+    }
+
     .strata-gui__slot-key,
     .strata-gui__slot-title {
       font-family: monogram, monospace;
@@ -305,6 +309,72 @@ export function ensureStrataGuiTheme() {
       letter-spacing: 0.06em;
       text-transform: uppercase;
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+    }
+
+    .strata-gui__inventory-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px 20px;
+      justify-items: center;
+      padding: 12px 10px 10px;
+    }
+
+    .strata-gui__inventory-slot {
+      position: relative;
+      width: 64px;
+      height: 64px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(180deg, rgba(8, 16, 36, 0.98), rgba(4, 9, 22, 0.98));
+      box-shadow:
+        inset 0 0 0 2px #203867,
+        inset 0 0 0 4px #091127,
+        0 0 0 2px rgba(239, 229, 189, 0.12);
+    }
+
+    .strata-gui__inventory-slot[data-empty='true'] {
+      opacity: 0.62;
+    }
+
+    .strata-gui__inventory-icon {
+      width: 36px;
+      height: 36px;
+      image-rendering: pixelated;
+      filter: drop-shadow(0 2px 0 rgba(3, 8, 18, 0.45));
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    .strata-gui__inventory-count {
+      position: absolute;
+      right: 7px;
+      bottom: 6px;
+      color: #fff6d8;
+      font-family: monogram, monospace;
+      font-size: 24px;
+      line-height: 1;
+      letter-spacing: 0;
+      text-shadow:
+        2px 2px 0 #091127,
+        0 0 4px rgba(4, 10, 23, 0.85);
+      pointer-events: none;
+    }
+
+    @keyframes strata-slot-collect {
+      0% {
+        transform: translateY(0) scale(1);
+        filter: brightness(1);
+      }
+
+      35% {
+        transform: translateY(-2px) scale(1.08);
+        filter: brightness(1.18);
+      }
+
+      100% {
+        transform: translateY(0) scale(1);
+        filter: brightness(1);
+      }
     }
   `;
   document.head.appendChild(styleTag);

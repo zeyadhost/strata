@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { Socket } from "socket.io-client";
 import { ProceduralAudioManager } from "../ProceduralAudioManager";
-import { createEmptyInventoryState, InventoryState, OreCollectedPayload, TileType, TileChange, PlayerState, WorldInitPayload } from "../types";
+import { createEmptyInventoryState, INVENTORY_KEYS, InventoryKey, InventoryState, InventoryUpdatePayload, OreCollectPayload, OreCollectedPayload, OreDropPayload, TileType, TileChange, PlayerState, WorldInitPayload } from "../types";
 import { loadSettings, saveSettings, type GameSettings } from "../settings";
 import { InventoryPanel } from "../ui/InventoryPanel";
 import { HotbarPanel, type HotbarSlotKey } from "../ui/HotbarPanel";
@@ -23,7 +23,7 @@ import {
 } from "../constants/world";
 
 const RENDER_BUFFER = 3;
-const DIG_RANGE     = 2;
+const DIG_RANGE     = 1;
 const MOVE_INTERVAL = 50;
 const CURSOR_DEFAULT = "url('/cursors/cursor-24.png') 1 1, auto";
 const HUD_BASE_FONT_SIZE = 18;
@@ -37,6 +37,14 @@ const BREAK_EFFECT_DEPTH = 26;
 const BREAK_STAGE_COUNT = 10;
 const BREAK_TEXTURE_KEY = "break-crack-atlas";
 const BREAK_FRAME_PREFIX = "break-stage-";
+const ORE_DROP_DEPTH = 24;
+const ORE_MAGNET_RADIUS = 34;
+const ORE_COLLECT_RADIUS = 14;
+const ORE_DROP_SIZE = 14;
+const ORE_FLIGHT_SIZE = 28;
+const ORE_MAGNET_BASE_SPEED = 92;
+const ORE_MAGNET_SPEED_GAIN = 1.45;
+const ORE_FLIGHT_DURATION_MS = 420;
 
 const BREAK_CRACK_PATHS: Array<Array<[number, number]>> = [
   [[8, 1], [7, 4], [8, 7], [6, 10], [4, 15]],
@@ -112,6 +120,21 @@ type TileRenderConfig = {
   rotation?: number;
 };
 
+type OreDropState = {
+  payload: OreDropPayload;
+  sprite: Phaser.GameObjects.Image;
+  bobTween: Phaser.Tweens.Tween | null;
+  collecting: boolean;
+};
+
+function gemTextureKey(item: InventoryKey) {
+  return `gem_${item}`;
+}
+
+function gemAssetPath(item: InventoryKey) {
+  return `/gems/${item}.png`;
+}
+
 export class GameScene extends Phaser.Scene {
   private socket!: Socket;
   private tiles: number[][] = [];
@@ -152,6 +175,7 @@ export class GameScene extends Phaser.Scene {
   private breakEffect!: Phaser.GameObjects.Image;
   private breakEffectStage = -1;
   private pendingDigTiles = new Set<number>();
+  private oreDrops = new Map<string, OreDropState>();
   private inventory: InventoryState = createEmptyInventoryState();
 
   constructor() {
@@ -176,6 +200,9 @@ export class GameScene extends Phaser.Scene {
     this.load.image("ore_emerald", "/ores/emerald.png");
     this.load.image("ore_sapphire", "/ores/sapphire.png");
     this.load.image("ore_diamond", "/ores/diamond.png");
+    for (const key of INVENTORY_KEYS) {
+      this.load.image(gemTextureKey(key), gemAssetPath(key));
+    }
   }
 
   create() {
@@ -264,6 +291,7 @@ export class GameScene extends Phaser.Scene {
       this.coordsText.remove();
       this.inventoryPanel.destroy();
       this.hotbarPanel.destroy();
+      this.clearOreDrops();
       this.breakEffect.destroy();
     });
 
@@ -295,13 +323,17 @@ export class GameScene extends Phaser.Scene {
       this.lastViewTop  = -999;
     });
 
-    this.socket.on("inventory:update", ({ inventory }: { inventory: InventoryState }) => {
+    this.socket.on("inventory:update", ({ inventory }: InventoryUpdatePayload) => {
       this.inventory = { ...inventory };
       this.inventoryPanel.setInventory(this.inventory);
     });
 
+    this.socket.on("ore:dropped", (payload: OreDropPayload) => {
+      this.spawnOreDrop(payload);
+    });
+
     this.socket.on("ore:collected", (payload: OreCollectedPayload) => {
-      this.showOrePickupText(payload);
+      this.handleOreCollected(payload);
     });
 
     this.socket.on("player:joined", (p: PlayerState) => this.spawnOtherPlayer(p));
@@ -325,6 +357,7 @@ export class GameScene extends Phaser.Scene {
     this.inventory = { ...payload.inventory };
     this.pendingDigTiles.clear();
     this.clearBreakTarget();
+    this.clearOreDrops();
 
     this.loadingText.destroy();
     this.initPlayer();
@@ -417,6 +450,148 @@ export class GameScene extends Phaser.Scene {
     const hue = Math.abs(hash) % 360;
     const color = Phaser.Display.Color.HSLToColor(hue / 360, 0.75, 0.58);
     return Phaser.Display.Color.GetColor(color.red, color.green, color.blue);
+  }
+
+  private spawnOreDrop(payload: OreDropPayload) {
+    this.destroyOreDrop(payload.dropId);
+
+    const centerX = payload.x * TILE_SIZE + TILE_SIZE / 2;
+    const centerY = payload.y * TILE_SIZE + TILE_SIZE / 2;
+    const spreadSeed = Array.from(payload.dropId).reduce((total, char) => total + char.charCodeAt(0), 0);
+    const offsetX = ((spreadSeed % 7) - 3) * 1.25;
+    const offsetY = (((spreadSeed >> 3) % 5) - 2) * 0.9;
+
+    const sprite = this.add.image(centerX + offsetX, centerY + offsetY, gemTextureKey(payload.item));
+    sprite.setDisplaySize(ORE_DROP_SIZE, ORE_DROP_SIZE);
+    sprite.setDepth(ORE_DROP_DEPTH);
+
+    const bobTween = this.tweens.add({
+      targets: sprite,
+      y: sprite.y - 3,
+      duration: 620 + (spreadSeed % 5) * 40,
+      ease: "Sine.InOut",
+      yoyo: true,
+      repeat: -1,
+    });
+
+    this.oreDrops.set(payload.dropId, {
+      payload,
+      sprite,
+      bobTween,
+      collecting: false,
+    });
+  }
+
+  private destroyOreDrop(dropId: string) {
+    const drop = this.oreDrops.get(dropId);
+    if (!drop) return;
+
+    drop.bobTween?.stop();
+    drop.sprite.destroy();
+    this.oreDrops.delete(dropId);
+  }
+
+  private clearOreDrops() {
+    for (const dropId of this.oreDrops.keys()) {
+      this.destroyOreDrop(dropId);
+    }
+  }
+
+  private updateOreDrops(delta: number) {
+    if (!this.player || this.oreDrops.size === 0) {
+      return;
+    }
+
+    const targetX = this.player.x;
+    const targetY = this.player.y - PLAYER_HEIGHT * 0.25;
+    const deltaSeconds = delta / 1000;
+
+    for (const drop of this.oreDrops.values()) {
+      if (drop.collecting) {
+        continue;
+      }
+
+      const dx = targetX - drop.sprite.x;
+      const dy = targetY - drop.sprite.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance > ORE_MAGNET_RADIUS) {
+        continue;
+      }
+
+      if (drop.bobTween) {
+        drop.bobTween.stop();
+        drop.bobTween = null;
+      }
+
+      const pullStrength = ORE_MAGNET_BASE_SPEED + (ORE_MAGNET_RADIUS - distance) * ORE_MAGNET_SPEED_GAIN;
+      const step = Math.min(pullStrength * deltaSeconds, distance);
+      if (distance > 0.001) {
+        drop.sprite.x += (dx / distance) * step;
+        drop.sprite.y += (dy / distance) * step;
+      }
+
+      if (distance <= ORE_COLLECT_RADIUS) {
+        drop.collecting = true;
+        drop.sprite.setVisible(false);
+        this.socket.emit("ore:collect", { dropId: drop.payload.dropId } satisfies OreCollectPayload);
+      }
+    }
+  }
+
+  private handleOreCollected(payload: OreCollectedPayload) {
+    const drop = this.oreDrops.get(payload.dropId);
+    if (drop) {
+      this.playOreCollectFlight(drop.payload.item, drop.sprite.x, drop.sprite.y);
+      this.destroyOreDrop(payload.dropId);
+    }
+
+    this.showOrePickupText(payload);
+  }
+
+  private playOreCollectFlight(item: InventoryKey, worldX: number, worldY: number) {
+    const slotRect = this.hotbarPanel.getSlotRect("inventory");
+    if (!slotRect) {
+      return;
+    }
+
+    const canvasRect = this.game.canvas.getBoundingClientRect();
+    const camera = this.cameras.main;
+    const zoom = camera.zoom;
+    const startX = canvasRect.left + (worldX - camera.worldView.x) * zoom - ORE_FLIGHT_SIZE / 2;
+    const startY = canvasRect.top + (worldY - camera.worldView.y) * zoom - ORE_FLIGHT_SIZE / 2;
+    const targetX = slotRect.left + slotRect.width / 2 - ORE_FLIGHT_SIZE / 2;
+    const targetY = slotRect.top + slotRect.height / 2 - ORE_FLIGHT_SIZE / 2;
+    const deltaX = targetX - startX;
+    const deltaY = targetY - startY;
+
+    const element = document.createElement("img");
+    element.src = gemAssetPath(item);
+    element.alt = "";
+    Object.assign(element.style, {
+      position: "fixed",
+      left: `${startX}px`,
+      top: `${startY}px`,
+      width: `${ORE_FLIGHT_SIZE}px`,
+      height: `${ORE_FLIGHT_SIZE}px`,
+      pointerEvents: "none",
+      zIndex: "980",
+      imageRendering: "pixelated",
+      transform: "translate3d(0, 0, 0) scale(1)",
+      opacity: "1",
+      transition: `transform ${ORE_FLIGHT_DURATION_MS}ms cubic-bezier(0.18, 0.88, 0.24, 1), opacity ${ORE_FLIGHT_DURATION_MS}ms ease-out`,
+      filter: "drop-shadow(0 3px 0 rgba(4, 10, 23, 0.55))",
+    } satisfies Partial<CSSStyleDeclaration>);
+    document.body.appendChild(element);
+
+    requestAnimationFrame(() => {
+      element.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0) scale(0.42)`;
+      element.style.opacity = "0.72";
+    });
+
+    window.setTimeout(() => {
+      element.remove();
+      this.hotbarPanel.pulseSlot("inventory");
+    }, ORE_FLIGHT_DURATION_MS + 20);
   }
 
   private invalidateTileSprite(tx: number, ty: number) {
@@ -949,6 +1124,8 @@ export class GameScene extends Phaser.Scene {
 
     const body  = this.player.body as Phaser.Physics.Arcade.Body;
     const grounded = body.blocked.down || body.touching.down;
+
+    this.updateOreDrops(delta);
 
     if (this.settingsMenu.isOpen() || this.inventoryPanel.isOpen()) {
       body.setVelocityX(0);

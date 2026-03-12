@@ -17,10 +17,15 @@ function formatInventoryLabel(key: InventoryKey) {
   return key.charAt(0).toUpperCase() + key.slice(1);
 }
 
+function gemAssetPath(key: InventoryKey) {
+  return `/gems/${key}.png`;
+}
+
 export class InventoryPanel {
   private readonly root: HTMLDivElement;
   private readonly panel: HTMLElement;
   private readonly values = new Map<InventoryKey, HTMLSpanElement>();
+  private readonly itemSlots = new Map<InventoryKey, HTMLDivElement>();
   private isPanelOpen = false;
   private readonly onVisibilityChange?: (isOpen: boolean) => void;
 
@@ -58,23 +63,29 @@ export class InventoryPanel {
     closeButton.addEventListener("click", () => this.close());
 
     const body = document.createElement("div");
-    body.className = "strata-gui__body";
+    body.className = "strata-gui__inventory-grid";
 
     for (const key of INVENTORY_ROWS) {
-      const row = document.createElement("div");
-      row.className = "strata-gui__row";
+      const slot = document.createElement("div");
+      slot.className = "strata-gui__inventory-slot";
+      slot.dataset.empty = "true";
+      slot.title = formatInventoryLabel(key);
 
-      const label = document.createElement("span");
-      label.className = "strata-gui__row-key";
-      label.textContent = formatInventoryLabel(key);
+      const icon = document.createElement("img");
+      icon.className = "strata-gui__inventory-icon";
+      icon.alt = formatInventoryLabel(key);
+      icon.decoding = "async";
+      icon.loading = "eager";
+      icon.src = gemAssetPath(key);
 
       const value = document.createElement("span");
-      value.className = "strata-gui__row-value";
+      value.className = "strata-gui__inventory-count";
       value.textContent = "0";
-      this.values.set(key, value);
 
-      row.append(label, value);
-      body.appendChild(row);
+      slot.append(icon, value);
+      body.appendChild(slot);
+      this.values.set(key, value);
+      this.itemSlots.set(key, slot);
     }
 
     titleWrap.append(title);
@@ -87,13 +98,15 @@ export class InventoryPanel {
 
   setInventory(inventory: InventoryState) {
     for (const key of INVENTORY_ROWS) {
-      this.values.get(key)!.textContent = String(inventory[key]);
+      const amount = inventory[key];
+      this.values.get(key)!.textContent = String(amount);
+      this.itemSlots.get(key)!.dataset.empty = amount > 0 ? "false" : "true";
     }
   }
 
   setLayout(layout: InventoryPanelLayout) {
     this.panel.style.padding = `${layout.paddingY}px ${layout.paddingX}px`;
-    this.panel.style.minWidth = `${Math.max(220, layout.fontSize * 11)}px`;
+    this.panel.style.minWidth = `${Math.max(320, layout.fontSize * 14)}px`;
 
     this.root.style.fontSize = `${layout.fontSize}px`;
     this.panel.style.setProperty("font-size", `${layout.fontSize}px`);

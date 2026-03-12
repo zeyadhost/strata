@@ -2,7 +2,7 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { World } from "./world/world";
-import { InventoryKey, createEmptyInventoryState, InventoryState, PlayerState, TileType, WorldInitPayload } from "./types";
+import { InventoryKey, createEmptyInventoryState, InventoryState, OreCollectPayload, OreDropPayload, PlayerState, TILE_SIZE, TileType, WorldInitPayload } from "./types";
 
 const app = express();
 const httpServer = createServer(app);
@@ -15,6 +15,9 @@ console.log(`World generated (seed: ${world.seed}), spawn: ${world.spawnX}, ${wo
 
 const players = new Map<string, PlayerState>();
 const inventories = new Map<string, InventoryState>();
+const playerDrops = new Map<string, Map<string, OreDropPayload>>();
+let nextDropId = 1;
+const ORE_PICKUP_RADIUS = 34;
 
 function getInventoryKeyForTile(tileType: TileType): InventoryKey | null {
   switch (tileType) {
@@ -50,6 +53,7 @@ io.on("connection", (socket) => {
   };
   players.set(socket.id, playerState);
   inventories.set(socket.id, createEmptyInventoryState());
+  playerDrops.set(socket.id, new Map());
 
   const payload: WorldInitPayload = {
     tiles: world.tiles,
@@ -80,16 +84,43 @@ io.on("connection", (socket) => {
     const inventoryKey = getInventoryKeyForTile(result.minedType);
     if (!inventoryKey) return;
 
+    const dropId = `drop-${nextDropId++}`;
+    const drop: OreDropPayload = {
+      dropId,
+      item: inventoryKey,
+      x: data.x,
+      y: data.y,
+    };
+
+    const drops = playerDrops.get(socket.id);
+    drops?.set(dropId, drop);
+    socket.emit("ore:dropped", drop);
+  });
+
+  socket.on("ore:collect", (data: OreCollectPayload) => {
+    const drops = playerDrops.get(socket.id);
+    const drop = drops?.get(data.dropId);
+    const player = players.get(socket.id);
+    if (!drop || !player) return;
+
+    const dropCenterX = drop.x * TILE_SIZE + TILE_SIZE / 2;
+    const dropCenterY = drop.y * TILE_SIZE + TILE_SIZE / 2;
+    const distance = Math.hypot(player.x - dropCenterX, player.y - dropCenterY);
+    if (distance > ORE_PICKUP_RADIUS) return;
+
+    drops?.delete(data.dropId);
+
     const inventory = inventories.get(socket.id) ?? createEmptyInventoryState();
-    inventory[inventoryKey] += 1;
+    inventory[drop.item] += 1;
     inventories.set(socket.id, inventory);
 
     socket.emit("inventory:update", { inventory: { ...inventory } });
     socket.emit("ore:collected", {
-      item: inventoryKey,
+      dropId: drop.dropId,
+      item: drop.item,
       amount: 1,
-      x: data.x,
-      y: data.y,
+      x: drop.x,
+      y: drop.y,
     });
   });
 
@@ -97,6 +128,7 @@ io.on("connection", (socket) => {
     console.log(`Player disconnected: ${socket.id}`);
     players.delete(socket.id);
     inventories.delete(socket.id);
+    playerDrops.delete(socket.id);
     io.emit("player:left", { id: socket.id });
   });
 });

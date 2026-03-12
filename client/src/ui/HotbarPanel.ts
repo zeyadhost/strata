@@ -32,6 +32,7 @@ export class HotbarPanel {
   private readonly slotKeys = new Map<HotbarSlotKey, HTMLSpanElement>();
   private readonly slotCopies = new Map<HotbarSlotKey, HTMLSpanElement>();
   private readonly slotBadges = new Map<HotbarSlotKey, HTMLSpanElement>();
+  private readonly pulseTimers = new Map<HotbarSlotKey, number>();
 
   constructor(options: HotbarPanelOptions) {
     ensureStrataGuiTheme();
@@ -130,7 +131,32 @@ export class HotbarPanel {
     bind.style.display = "inline";
   }
 
+  getSlotRect(slot: HotbarSlotKey) {
+    return this.slots.get(slot)?.getBoundingClientRect() ?? null;
+  }
+
+  pulseSlot(slot: HotbarSlotKey) {
+    const button = this.slots.get(slot);
+    if (!button) return;
+
+    const existingTimer = this.pulseTimers.get(slot);
+    if (existingTimer != null) {
+      window.clearTimeout(existingTimer);
+    }
+
+    button.dataset.collect = "true";
+    const timer = window.setTimeout(() => {
+      button.dataset.collect = "false";
+      this.pulseTimers.delete(slot);
+    }, 360);
+    this.pulseTimers.set(slot, timer);
+  }
+
   destroy() {
+    for (const timer of this.pulseTimers.values()) {
+      window.clearTimeout(timer);
+    }
+    this.pulseTimers.clear();
     this.root.remove();
     destroyStrataGuiThemeIfUnused();
   }

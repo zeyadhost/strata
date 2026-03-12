@@ -42,7 +42,19 @@ export interface InventoryUpdatePayload {
   inventory: InventoryState;
 }
 
+export interface OreDropPayload {
+  dropId: string;
+  item: InventoryKey;
+  x: number;
+  y: number;
+}
+
+export interface OreCollectPayload {
+  dropId: string;
+}
+
 export interface OreCollectedPayload {
+  dropId: string;
   item: InventoryKey;
   amount: number;
   x: number;
