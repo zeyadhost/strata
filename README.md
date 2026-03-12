@@ -34,6 +34,14 @@ npm run build
 
 Output goes to `client/dist/` — this is what gets uploaded to itch.io.
 
+## Art Credits
+
+Ores, tiles, gems, player, shop, and NPC art by [CoolGirlArts](https://coolgirlarts.wixsite.com/coolgirlarts-website).
+
+Cursor art from [ASpecsGaming cursor hands](https://aspecsgaming.itch.io/cursor-hands).
+
+Settings icons from [Crusenho Icons Essential Pack](https://crusenho.itch.io/icons-essential-pack-free-icons).
+
 ## Project Structure
 
 ```
