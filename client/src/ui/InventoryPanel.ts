@@ -1,4 +1,4 @@
-import type { InventoryState } from "../types";
+import { INVENTORY_KEYS, type InventoryKey, type InventoryState } from "../types";
 import { destroyStrataGuiThemeIfUnused, ensureStrataGuiTheme } from "./StrataGuiTheme";
 
 type InventoryPanelLayout = {
@@ -11,12 +11,16 @@ type InventoryPanelOptions = {
   onVisibilityChange?: (isOpen: boolean) => void;
 };
 
-const INVENTORY_ROWS: Array<keyof InventoryState> = ["coal", "emerald", "diamond"];
+const INVENTORY_ROWS: InventoryKey[] = [...INVENTORY_KEYS];
+
+function formatInventoryLabel(key: InventoryKey) {
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
 
 export class InventoryPanel {
   private readonly root: HTMLDivElement;
   private readonly panel: HTMLElement;
-  private readonly values = new Map<keyof InventoryState, HTMLSpanElement>();
+  private readonly values = new Map<InventoryKey, HTMLSpanElement>();
   private isPanelOpen = false;
   private readonly onVisibilityChange?: (isOpen: boolean) => void;
 
@@ -62,7 +66,7 @@ export class InventoryPanel {
 
       const label = document.createElement("span");
       label.className = "strata-gui__row-key";
-      label.textContent = key;
+      label.textContent = formatInventoryLabel(key);
 
       const value = document.createElement("span");
       value.className = "strata-gui__row-value";

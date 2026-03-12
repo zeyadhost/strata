@@ -1,11 +1,16 @@
 export enum TileType {
-  AIR     = 0,
-  GRASS   = 1,
-  DIRT    = 2,
-  STONE   = 3,
-  COAL    = 4,
-  EMERALD = 5,
-  DIAMOND = 6,
+  AIR      = 0,
+  GRASS    = 1,
+  DIRT     = 2,
+  STONE    = 3,
+  COAL     = 4,
+  COPPER   = 5,
+  IRON     = 6,
+  SILVER   = 7,
+  GOLD     = 8,
+  EMERALD  = 9,
+  SAPPHIRE = 10,
+  DIAMOND  = 11,
 }
 
 export interface TileChange {
@@ -14,9 +19,24 @@ export interface TileChange {
   type: TileType;
 }
 
-export type InventoryKey = "coal" | "emerald" | "diamond";
+export const INVENTORY_KEYS = ["coal", "copper", "iron", "silver", "gold", "emerald", "sapphire", "diamond"] as const;
+
+export type InventoryKey = (typeof INVENTORY_KEYS)[number];
 
 export type InventoryState = Record<InventoryKey, number>;
+
+export function createEmptyInventoryState(): InventoryState {
+  return {
+    coal: 0,
+    copper: 0,
+    iron: 0,
+    silver: 0,
+    gold: 0,
+    emerald: 0,
+    sapphire: 0,
+    diamond: 0,
+  };
+}
 
 export interface InventoryUpdatePayload {
   inventory: InventoryState;

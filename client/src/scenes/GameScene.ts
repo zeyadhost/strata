@@ -1,19 +1,23 @@
 import Phaser from "phaser";
 import { Socket } from "socket.io-client";
 import { ProceduralAudioManager } from "../ProceduralAudioManager";
-import { InventoryState, OreCollectedPayload, TileType, TileChange, PlayerState, WorldInitPayload } from "../types";
+import { createEmptyInventoryState, InventoryState, OreCollectedPayload, TileType, TileChange, PlayerState, WorldInitPayload } from "../types";
 import { loadSettings, saveSettings, type GameSettings } from "../settings";
 import { InventoryPanel } from "../ui/InventoryPanel";
 import { HotbarPanel, type HotbarSlotKey } from "../ui/HotbarPanel";
 import { SettingsMenu } from "../ui/SettingsMenu";
+import { DEFAULT_EQUIPPED_PICKAXES } from "../constants/pickaxes";
 import {
   TILE_SIZE,
   WORLD_WIDTH,
   WORLD_HEIGHT,
+  LAYER_SHALLOW,
   PLAYER_SPEED,
   PLAYER_JUMP_VEL,
   PLAYER_WIDTH,
+  PLAYER_BODY_WIDTH,
   PLAYER_HEIGHT,
+  DIRT_STONE_TRANSITION_TEXTURE,
   TILE_TEXTURE,
   ORE_GLOW,
 } from "../constants/world";
@@ -29,6 +33,84 @@ const HUD_BASE_PADDING_Y = 4;
 const HUD_FOV_MIN = 0.75;
 const HUD_FOV_MAX = 2;
 const HOTBAR_BASE_BOTTOM = 18;
+const BREAK_EFFECT_DEPTH = 26;
+const BREAK_STAGE_COUNT = 10;
+const BREAK_TEXTURE_KEY = "break-crack-atlas";
+const BREAK_FRAME_PREFIX = "break-stage-";
+
+const BREAK_CRACK_PATHS: Array<Array<[number, number]>> = [
+  [[8, 1], [7, 4], [8, 7], [6, 10], [4, 15]],
+  [[8, 7], [10, 5], [12, 4], [15, 2]],
+  [[8, 7], [11, 8], [13, 10], [14, 14]],
+  [[6, 10], [8, 12], [10, 15]],
+  [[7, 4], [4, 3], [2, 1]],
+  [[7, 4], [5, 6], [3, 7], [1, 8]],
+  [[11, 8], [12, 7], [14, 6]],
+  [[5, 12], [3, 13], [1, 15]],
+  [[10, 5], [10, 3], [11, 1]],
+  [[9, 12], [11, 13], [13, 15]],
+  [[4, 9], [2, 10], [1, 12]],
+  [[12, 9], [14, 10], [15, 12]],
+];
+
+const BREAK_STAGE_PATH_COUNTS = [2, 3, 4, 5, 6, 7, 8, 9, 11, 12];
+
+function breakFrameKey(stage: number) {
+  return `${BREAK_FRAME_PREFIX}${stage}`;
+}
+
+function plotBreakPixel(context: CanvasRenderingContext2D, baseX: number, x: number, y: number, color: string) {
+  if (x < 0 || x >= TILE_SIZE || y < 0 || y >= TILE_SIZE) {
+    return;
+  }
+
+  context.fillStyle = color;
+  context.fillRect(baseX + x, y, 1, 1);
+}
+
+function drawBreakLine(
+  context: CanvasRenderingContext2D,
+  baseX: number,
+  start: [number, number],
+  end: [number, number],
+  color: string,
+) {
+  let [x0, y0] = start;
+  const [x1, y1] = end;
+  const deltaX = Math.abs(x1 - x0);
+  const deltaY = Math.abs(y1 - y0);
+  const stepX = x0 < x1 ? 1 : -1;
+  const stepY = y0 < y1 ? 1 : -1;
+  let error = deltaX - deltaY;
+
+  while (true) {
+    plotBreakPixel(context, baseX, x0, y0, color);
+    if (x0 === x1 && y0 === y1) {
+      break;
+    }
+    const doubledError = error * 2;
+    if (doubledError > -deltaY) {
+      error -= deltaY;
+      x0 += stepX;
+    }
+    if (doubledError < deltaX) {
+      error += deltaX;
+      y0 += stepY;
+    }
+  }
+}
+
+type BreakTarget = {
+  x: number;
+  y: number;
+  type: TileType;
+  durationMs: number;
+};
+
+type TileRenderConfig = {
+  textureKey: string;
+  rotation?: number;
+};
 
 export class GameScene extends Phaser.Scene {
   private socket!: Socket;
@@ -58,7 +140,6 @@ export class GameScene extends Phaser.Scene {
   };
 
   private moveTimer = 0;
-  private digRepeatTimer = 0;
   private pointerMining = false;
   private wasGrounded = false;
   private loadingText!: Phaser.GameObjects.Text;
@@ -66,11 +147,12 @@ export class GameScene extends Phaser.Scene {
   private inventoryPanel!: InventoryPanel;
   private hotbarPanel!: HotbarPanel;
   private activeHotbarSlot: HotbarSlotKey = "main-pickaxe";
-  private inventory: InventoryState = {
-    coal: 0,
-    emerald: 0,
-    diamond: 0,
-  };
+  private breakTarget: BreakTarget | null = null;
+  private breakElapsedMs = 0;
+  private breakEffect!: Phaser.GameObjects.Image;
+  private breakEffectStage = -1;
+  private pendingDigTiles = new Set<number>();
+  private inventory: InventoryState = createEmptyInventoryState();
 
   constructor() {
     super({ key: "GameScene" });
@@ -85,15 +167,22 @@ export class GameScene extends Phaser.Scene {
     this.load.image("tile_grass", "/tiles/grass.png");
     this.load.image("tile_dirt", "/tiles/dirt.png");
     this.load.image("tile_stone", "/tiles/stone.png");
-    this.load.image("gem_coal", "/gems/coal.png");
-    this.load.image("gem_emerald", "/gems/emerald.png");
-    this.load.image("gem_diamond", "/gems/diamond.png");
+    this.load.image(DIRT_STONE_TRANSITION_TEXTURE, "/tiles/dirt_stone_transition.png");
+    this.load.image("ore_coal", "/ores/coal.png");
+    this.load.image("ore_copper", "/ores/copper.png");
+    this.load.image("ore_iron", "/ores/iron.png");
+    this.load.image("ore_silver", "/ores/silver.png");
+    this.load.image("ore_gold", "/ores/gold.png");
+    this.load.image("ore_emerald", "/ores/emerald.png");
+    this.load.image("ore_sapphire", "/ores/sapphire.png");
+    this.load.image("ore_diamond", "/ores/diamond.png");
   }
 
   create() {
     this.tileGroup = this.physics.add.staticGroup();
     this.input.setDefaultCursor(CURSOR_DEFAULT);
     this.audioManager = new ProceduralAudioManager(this.settings);
+    this.ensureBreakTextureAtlas();
 
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.wasd = {
@@ -128,6 +217,12 @@ export class GameScene extends Phaser.Scene {
     } satisfies Partial<CSSStyleDeclaration>);
     document.body.appendChild(this.coordsText);
 
+    this.breakEffect = this.add.image(0, 0, BREAK_TEXTURE_KEY, breakFrameKey(0));
+    this.breakEffect.setOrigin(0);
+    this.breakEffect.setDepth(BREAK_EFFECT_DEPTH);
+    this.breakEffect.setAlpha(0.9);
+    this.breakEffect.setVisible(false);
+
     this.inventoryPanel = new InventoryPanel({
       onVisibilityChange: (isOpen) => {
         this.hotbarPanel?.setActiveSlot(isOpen ? "inventory" : this.activeHotbarSlot);
@@ -136,6 +231,16 @@ export class GameScene extends Phaser.Scene {
     this.inventoryPanel.setInventory(this.inventory);
     this.hotbarPanel = new HotbarPanel({
       onSelect: (slot) => this.handleHotbarSelect(slot),
+    });
+    this.hotbarPanel.setSlotVisual("main-pickaxe", {
+      title: DEFAULT_EQUIPPED_PICKAXES.primary.shortName,
+      accentColor: DEFAULT_EQUIPPED_PICKAXES.primary.accentColor,
+      compact: true,
+    });
+    this.hotbarPanel.setSlotVisual("secondary-pickaxe", {
+      title: DEFAULT_EQUIPPED_PICKAXES.secondary.shortName,
+      accentColor: DEFAULT_EQUIPPED_PICKAXES.secondary.accentColor,
+      compact: true,
     });
     this.hotbarPanel.setActiveSlot(this.activeHotbarSlot);
 
@@ -159,6 +264,7 @@ export class GameScene extends Phaser.Scene {
       this.coordsText.remove();
       this.inventoryPanel.destroy();
       this.hotbarPanel.destroy();
+      this.breakEffect.destroy();
     });
 
     this.registerSocketEvents();
@@ -177,10 +283,13 @@ export class GameScene extends Phaser.Scene {
     this.socket.on("tile:update", (change: TileChange) => {
       if (!this.tiles[change.y]) return;
       this.tiles[change.y][change.x] = change.type;
+      this.pendingDigTiles.delete(this.getTileKey(change.x, change.y));
 
-      this.invalidateTileSprite(change.x, change.y);
-      this.invalidateTileSprite(change.x - 1, change.y + 1);
-      this.invalidateTileSprite(change.x + 1, change.y + 1);
+      if (this.breakTarget?.x === change.x && this.breakTarget?.y === change.y) {
+        this.clearBreakTarget();
+      }
+
+      this.invalidateTileNeighborhood(change.x, change.y);
 
       this.lastViewLeft = -999;
       this.lastViewTop  = -999;
@@ -214,6 +323,8 @@ export class GameScene extends Phaser.Scene {
     this.spawnX = payload.spawnX;
     this.spawnY = payload.spawnY;
     this.inventory = { ...payload.inventory };
+    this.pendingDigTiles.clear();
+    this.clearBreakTarget();
 
     this.loadingText.destroy();
     this.initPlayer();
@@ -249,8 +360,8 @@ export class GameScene extends Phaser.Scene {
     this.player.setDepth(10);
     this.physics.add.existing(this.player);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
-    body.setSize(PLAYER_WIDTH, PLAYER_HEIGHT);
-    body.setOffset(0, 0);
+    body.setSize(PLAYER_BODY_WIDTH, PLAYER_HEIGHT);
+    body.setOffset((PLAYER_WIDTH - PLAYER_BODY_WIDTH) * 0.5, 0);
     body.setCollideWorldBounds(false);
     this.wasGrounded = false;
 
@@ -258,7 +369,13 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setRoundPixels(true);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
-    this.physics.add.collider(this.player, this.tileGroup);
+    this.physics.add.collider(this.player, this.tileGroup, undefined, (_playerObj, tileObj) => {
+      const pb = this.player.body as Phaser.Physics.Arcade.Body;
+      const tb = (tileObj as Phaser.Physics.Arcade.Image).body as Phaser.Physics.Arcade.StaticBody;
+      const inXRange = pb.center.x >= tb.position.x && pb.center.x <= tb.position.x + tb.width;
+      const inYRange = pb.center.y >= tb.position.y && pb.center.y <= tb.position.y + tb.height;
+      return inXRange || inYRange;
+    });
     this.createWorldBarriers();
 
     this.applySettings(this.settings);
@@ -313,20 +430,46 @@ export class GameScene extends Phaser.Scene {
     this.tileGlows.delete(key);
   }
 
+  private invalidateTileNeighborhood(tx: number, ty: number) {
+    const neighbors: Array<[number, number]> = [
+      [tx, ty],
+      [tx, ty - 1],
+      [tx, ty + 1],
+      [tx - 1, ty],
+      [tx + 1, ty],
+      [tx - 1, ty + 1],
+      [tx + 1, ty + 1],
+      [tx - 1, ty - 1],
+      [tx + 1, ty - 1],
+    ];
+
+    for (const [neighborX, neighborY] of neighbors) {
+      this.invalidateTileSprite(neighborX, neighborY);
+    }
+  }
+
   private isSolidTile(tx: number, ty: number): boolean {
     return this.tiles[ty]?.[tx] !== undefined && this.tiles[ty][tx] !== TileType.AIR;
   }
 
-  private getTileTextureKey(tx: number, ty: number, tileType: TileType): string | undefined {
+  private getTileTextureConfig(tx: number, ty: number, tileType: TileType): TileRenderConfig | null {
     if (tileType === TileType.GRASS) {
       const aboveLeft = this.isSolidTile(tx - 1, ty - 1);
       const aboveRight = this.isSolidTile(tx + 1, ty - 1);
       if (aboveLeft && aboveRight) {
-        return TILE_TEXTURE[TileType.DIRT];
+        return { textureKey: TILE_TEXTURE[TileType.DIRT] };
       }
     }
 
-    return TILE_TEXTURE[tileType];
+    if (tileType === TileType.STONE && ty === LAYER_SHALLOW) {
+      return {
+        textureKey: DIRT_STONE_TRANSITION_TEXTURE,
+        rotation: 90,
+      };
+    }
+
+    const textureKey = TILE_TEXTURE[tileType];
+    return textureKey ? { textureKey } : null;
   }
 
   private updateViewport(force = false) {
@@ -361,13 +504,19 @@ export class GameScene extends Phaser.Scene {
         if (tileType === TileType.AIR) continue;
         const key = ty * WORLD_WIDTH + tx;
         if (this.tileSprites.has(key)) continue;
-        const textureKey = this.getTileTextureKey(tx, ty, tileType);
-        if (!textureKey) continue;
+        const renderConfig = this.getTileTextureConfig(tx, ty, tileType);
+        if (!renderConfig) continue;
         const px = tx * TILE_SIZE + TILE_SIZE / 2;
         const py = ty * TILE_SIZE + TILE_SIZE / 2;
-        const sprite = this.physics.add.staticImage(px, py, textureKey);
+        const sprite = this.physics.add.staticImage(px, py, renderConfig.textureKey);
+        if (renderConfig.rotation) {
+          sprite.setAngle(renderConfig.rotation);
+        }
         sprite.setDisplaySize(TILE_SIZE, TILE_SIZE);
-        sprite.refreshBody();
+        const spriteBody = sprite.body as Phaser.Physics.Arcade.StaticBody;
+        spriteBody.setSize(TILE_SIZE, TILE_SIZE);
+        spriteBody.position.set(px - TILE_SIZE / 2, py - TILE_SIZE / 2);
+        spriteBody.updateCenter();
         this.tileGroup.add(sprite);
         this.tileSprites.set(key, sprite);
 
@@ -384,10 +533,91 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleDig(pointer: Phaser.Input.Pointer) {
-    if (!this.worldReady || !this.player) return;
+    const target = this.getDigTarget(pointer);
+    if (!target) {
+      this.clearBreakTarget();
+      return;
+    }
+
+    if (this.breakTarget?.x === target.x && this.breakTarget?.y === target.y) {
+      return;
+    }
+
+    this.breakTarget = target;
+    this.breakElapsedMs = 0;
+    this.breakEffectStage = -1;
+    this.updateBreakEffectStage(0);
+    this.audioManager.playDigHit(target.x * TILE_SIZE + TILE_SIZE / 2, this.player.x, 0);
+    this.spawnBreakParticles(target, 3, 0.45);
+  }
+
+  private ensureBreakTextureAtlas() {
+    if (this.textures.exists(BREAK_TEXTURE_KEY)) {
+      return;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = TILE_SIZE * BREAK_STAGE_COUNT;
+    canvas.height = TILE_SIZE;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.imageSmoothingEnabled = false;
+
+    for (let stage = 0; stage < BREAK_STAGE_COUNT; stage++) {
+      const baseX = stage * TILE_SIZE;
+      const pathCount = BREAK_STAGE_PATH_COUNTS[stage];
+      const shadowColor = `rgba(16, 22, 36, ${0.22 + stage * 0.045})`;
+      const highlightColor = `rgba(244, 246, 255, ${0.24 + stage * 0.06})`;
+      const glowColor = `rgba(224, 230, 255, ${0.08 + stage * 0.022})`;
+
+      context.fillStyle = `rgba(255, 255, 255, ${0.03 + stage * 0.011})`;
+      context.fillRect(baseX, 0, TILE_SIZE, TILE_SIZE);
+
+      for (let pathIndex = 0; pathIndex < pathCount; pathIndex++) {
+        const path = BREAK_CRACK_PATHS[pathIndex];
+        for (let pointIndex = 0; pointIndex < path.length - 1; pointIndex++) {
+          const start = path[pointIndex];
+          const end = path[pointIndex + 1];
+          drawBreakLine(context, baseX, [start[0] + 1, start[1] + 1], [end[0] + 1, end[1] + 1], shadowColor);
+          drawBreakLine(context, baseX, [start[0], start[1]], [end[0], end[1]], highlightColor);
+        }
+      }
+
+      if (stage >= 4) {
+        for (let speck = 0; speck < stage; speck++) {
+          const px = (stage * 7 + speck * 5) % 14 + 1;
+          const py = (stage * 3 + speck * 4) % 14 + 1;
+          plotBreakPixel(context, baseX, px, py, glowColor);
+        }
+      }
+    }
+
+    const texture = this.textures.addCanvas(BREAK_TEXTURE_KEY, canvas);
+    if (!texture) {
+      return;
+    }
+
+    for (let stage = 0; stage < BREAK_STAGE_COUNT; stage++) {
+      texture.add(breakFrameKey(stage), 0, stage * TILE_SIZE, 0, TILE_SIZE, TILE_SIZE);
+    }
+  }
+
+  private getDigTarget(pointer: Phaser.Input.Pointer): BreakTarget | null {
+    if (!this.worldReady || !this.player) return null;
 
     const tx = Math.floor(pointer.worldX / TILE_SIZE);
     const ty = Math.floor(pointer.worldY / TILE_SIZE);
+
+    return this.getDigTargetAt(tx, ty);
+  }
+
+  private getDigTargetAt(tx: number, ty: number): BreakTarget | null {
+    if (!this.worldReady || !this.player) return null;
 
     const ptx = Math.floor(this.player.x / TILE_SIZE);
     const pty = Math.floor(this.player.y / TILE_SIZE);
@@ -395,13 +625,19 @@ export class GameScene extends Phaser.Scene {
     const dx = tx - ptx;
     const dy = ty - pty;
 
-    if (dy < 0 && dx === 0) return;
-    if (Math.abs(dx) > DIG_RANGE || dy > DIG_RANGE) return;
-    if (dy < 0 && Math.abs(dy) > 1) return;
-    if (this.tiles[ty]?.[tx] === TileType.AIR) return;
+    if (dy < 0 && dx === 0) return null;
+    if (Math.abs(dx) > DIG_RANGE || dy > DIG_RANGE) return null;
+    if (dy < 0 && Math.abs(dy) > 1) return null;
+    if (this.tiles[ty]?.[tx] === TileType.AIR) return null;
+    if (this.pendingDigTiles.has(this.getTileKey(tx, ty))) return null;
 
-    this.audioManager.playDig(pointer.worldX, this.player.x);
-    this.socket.emit("tile:dig", { x: tx, y: ty });
+    const type = this.tiles[ty][tx] as TileType;
+    return {
+      x: tx,
+      y: ty,
+      type,
+      durationMs: this.getBreakDuration(type),
+    };
   }
 
   private onAnyKeyDown(event: KeyboardEvent) {
@@ -427,13 +663,166 @@ export class GameScene extends Phaser.Scene {
 
     void this.audioManager.unlock();
     this.pointerMining = this.settings.holdToMine;
-    this.digRepeatTimer = 0;
     this.handleDig(pointer);
   }
 
   private onPointerUp() {
-    this.pointerMining = false;
-    this.digRepeatTimer = 0;
+    if (this.settings.holdToMine) {
+      this.pointerMining = false;
+      this.clearBreakTarget();
+    }
+  }
+
+  private getTileKey(tx: number, ty: number) {
+    return ty * WORLD_WIDTH + tx;
+  }
+
+  private getBreakDuration(type: TileType) {
+    switch (type) {
+      case TileType.GRASS:
+        return 180;
+      case TileType.DIRT:
+        return 260;
+      case TileType.STONE:
+        return 520;
+      case TileType.COAL:
+        return 640;
+      case TileType.COPPER:
+        return 700;
+      case TileType.IRON:
+        return 760;
+      case TileType.SILVER:
+        return 820;
+      case TileType.GOLD:
+        return 860;
+      case TileType.EMERALD:
+        return 940;
+      case TileType.SAPPHIRE:
+        return 1020;
+      case TileType.DIAMOND:
+        return 1120;
+      default:
+        return 420;
+    }
+  }
+
+  private getBreakEffectColor(type: TileType) {
+    switch (type) {
+      case TileType.GRASS:
+        return 0xa7d95e;
+      case TileType.DIRT:
+        return 0xb48352;
+      case TileType.STONE:
+        return 0xc8d1e2;
+      case TileType.COAL:
+        return 0x9aa0ad;
+      case TileType.COPPER:
+        return 0xd88a57;
+      case TileType.IRON:
+        return 0xcbd4de;
+      case TileType.SILVER:
+        return 0xe6e8fb;
+      case TileType.GOLD:
+        return 0xffcf5e;
+      case TileType.EMERALD:
+        return 0x3bf4a3;
+      case TileType.SAPPHIRE:
+        return 0x56bcff;
+      case TileType.DIAMOND:
+        return 0x7de5ff;
+      default:
+        return 0xf7f1d5;
+    }
+  }
+
+  private clearBreakTarget() {
+    this.breakTarget = null;
+    this.breakElapsedMs = 0;
+    this.breakEffectStage = -1;
+    this.breakEffect.setVisible(false);
+  }
+
+  private updateBreakEffectStage(progress: number) {
+    if (!this.breakTarget) return;
+
+    const tileLeft = this.breakTarget.x * TILE_SIZE;
+    const tileTop = this.breakTarget.y * TILE_SIZE;
+    const stage = Phaser.Math.Clamp(Math.floor(progress * BREAK_STAGE_COUNT), 0, BREAK_STAGE_COUNT - 1);
+    this.breakEffect.setPosition(tileLeft, tileTop);
+    this.breakEffect.setFrame(breakFrameKey(stage));
+    this.breakEffect.setTint(this.getBreakEffectColor(this.breakTarget.type));
+    this.breakEffect.setVisible(true);
+
+    if (stage > this.breakEffectStage) {
+      this.breakEffectStage = stage;
+      if (stage > 0) {
+        this.audioManager.playDigHit(tileLeft + TILE_SIZE / 2, this.player.x, stage / (BREAK_STAGE_COUNT - 1));
+        this.spawnBreakParticles(this.breakTarget, 2, 0.35 + stage * 0.08);
+      }
+    }
+  }
+
+  private spawnBreakParticles(target: BreakTarget, count: number, strength: number) {
+    const color = this.getBreakEffectColor(target.type);
+    const centerX = target.x * TILE_SIZE + TILE_SIZE / 2;
+    const centerY = target.y * TILE_SIZE + TILE_SIZE / 2;
+
+    for (let index = 0; index < count; index++) {
+      const size = Phaser.Math.Between(2, 4);
+      const particle = this.add.rectangle(
+        centerX + Phaser.Math.Between(-5, 5),
+        centerY + Phaser.Math.Between(-5, 5),
+        size,
+        size,
+        color,
+        0.95,
+      );
+      particle.setDepth(BREAK_EFFECT_DEPTH + 1);
+
+      const driftX = Phaser.Math.Between(-14, 14) * strength;
+      const driftY = Phaser.Math.Between(-18, -6) * strength;
+
+      this.tweens.add({
+        targets: particle,
+        x: particle.x + driftX,
+        y: particle.y + driftY,
+        alpha: 0,
+        angle: Phaser.Math.Between(-30, 30),
+        ease: "Quad.Out",
+        duration: Phaser.Math.Between(180, 320),
+        onComplete: () => particle.destroy(),
+      });
+    }
+  }
+
+  private completeBreak(target: BreakTarget) {
+    this.pendingDigTiles.add(this.getTileKey(target.x, target.y));
+    this.audioManager.playDig(target.x * TILE_SIZE + TILE_SIZE / 2, this.player.x);
+    this.spawnBreakParticles(target, 8, 1);
+    this.socket.emit("tile:dig", { x: target.x, y: target.y });
+    this.clearBreakTarget();
+  }
+
+  private updateBreaking(delta: number) {
+    if (!this.breakTarget) {
+      this.breakEffect.setVisible(false);
+      return;
+    }
+
+    const refreshedTarget = this.getDigTargetAt(this.breakTarget.x, this.breakTarget.y);
+    if (!refreshedTarget) {
+      this.clearBreakTarget();
+      return;
+    }
+
+    this.breakTarget = refreshedTarget;
+    this.breakElapsedMs += delta;
+    const progress = Phaser.Math.Clamp(this.breakElapsedMs / this.breakTarget.durationMs, 0, 1);
+    this.updateBreakEffectStage(progress);
+
+    if (progress >= 1) {
+      this.completeBreak(this.breakTarget);
+    }
   }
 
   private handleHotbarSelect(slot: HotbarSlotKey) {
@@ -564,6 +953,7 @@ export class GameScene extends Phaser.Scene {
     if (this.settingsMenu.isOpen() || this.inventoryPanel.isOpen()) {
       body.setVelocityX(0);
       this.pointerMining = false;
+      this.clearBreakTarget();
       this.updateCoordinatesText();
       this.audioManager.updateMusic({
         depth: Math.floor(this.player.y / TILE_SIZE),
@@ -593,12 +983,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.pointerMining && this.settings.holdToMine) {
-      this.digRepeatTimer += delta;
-      if (this.digRepeatTimer >= 140) {
-        this.handleDig(this.input.activePointer);
-        this.digRepeatTimer = 0;
-      }
+      this.handleDig(this.input.activePointer);
     }
+
+    this.updateBreaking(delta);
 
     this.snapCameraToPixels();
     this.updateViewport();

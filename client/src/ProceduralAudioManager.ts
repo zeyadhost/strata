@@ -91,6 +91,42 @@ export class ProceduralAudioManager {
     this.scheduleCleanup(oscillator, cleanup, now + 0.12);
   }
 
+  playDigHit(sourceX: number, listenerX: number, progress: number) {
+    if (!this.canPlaySfx()) return;
+
+    const context = this.ensureContext();
+    if (context.state !== "running") return;
+
+    const now = context.currentTime;
+    const clampedProgress = clamp(progress, 0, 1);
+    const rootFrequency = 540 - clampedProgress * 120;
+    const accentFrequency = rootFrequency * (1.48 + clampedProgress * 0.08);
+    const body = context.createOscillator();
+    const accent = context.createOscillator();
+    const bodyGain = context.createGain();
+    const accentGain = context.createGain();
+
+    body.type = "square";
+    accent.type = "triangle";
+    body.frequency.setValueAtTime(rootFrequency, now);
+    accent.frequency.setValueAtTime(accentFrequency, now);
+    body.frequency.exponentialRampToValueAtTime(rootFrequency * 0.76, now + 0.045);
+    accent.frequency.exponentialRampToValueAtTime(accentFrequency * 0.72, now + 0.05);
+
+    bodyGain.gain.setValueAtTime(0.0001, now);
+    bodyGain.gain.exponentialRampToValueAtTime(this.getSfxLevel(0.06), now + 0.004);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+
+    accentGain.gain.setValueAtTime(0.0001, now);
+    accentGain.gain.exponentialRampToValueAtTime(this.getSfxLevel(0.035), now + 0.003);
+    accentGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.045);
+
+    const cleanupBody = this.connectVoice(body, bodyGain, sourceX, listenerX);
+    const cleanupAccent = this.connectVoice(accent, accentGain, sourceX, listenerX);
+    this.scheduleCleanup(body, cleanupBody, now + 0.06);
+    this.scheduleCleanup(accent, cleanupAccent, now + 0.06);
+  }
+
   playJump(sourceX: number, listenerX: number) {
     if (!this.canPlaySfx()) return;
 

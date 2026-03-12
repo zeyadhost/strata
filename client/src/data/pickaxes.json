@@ -1,0 +1,47 @@
+[
+  {
+    "id": "wooden-pickaxe",
+    "name": "Wooden Pickaxe",
+    "shortName": "Wood Pick",
+    "description": "Starter tool for coal and copper. Too weak for the richer deep ores.",
+    "tier": 1,
+    "miningSpeed": 0.75,
+    "oreAccess": ["coal", "copper"]
+  },
+  {
+    "id": "copper-pickaxe",
+    "name": "Copper Pickaxe",
+    "shortName": "Copper Pick",
+    "description": "Faster than wood and able to bite into the first metal veins.",
+    "tier": 2,
+    "miningSpeed": 0.95,
+    "oreAccess": ["coal", "copper", "iron"]
+  },
+  {
+    "id": "iron-pickaxe",
+    "name": "Iron Pickaxe",
+    "shortName": "Iron Pick",
+    "description": "Reliable mid-tier pick for iron, silver, gold, and emerald seams.",
+    "tier": 3,
+    "miningSpeed": 1.2,
+    "oreAccess": ["coal", "copper", "iron", "silver", "gold", "emerald"]
+  },
+  {
+    "id": "steel-pickaxe",
+    "name": "Steel Pickaxe",
+    "shortName": "Steel Pick",
+    "description": "Heavy-duty upgrade for the deep layers, including sapphire and diamond.",
+    "tier": 4,
+    "miningSpeed": 1.45,
+    "oreAccess": ["coal", "copper", "iron", "silver", "gold", "emerald", "sapphire", "diamond"]
+  },
+  {
+    "id": "diamond-pickaxe",
+    "name": "Diamond Pickaxe",
+    "shortName": "Diamond Pick",
+    "description": "Top-tier placeholder pick with the fastest break speed for every ore.",
+    "tier": 5,
+    "miningSpeed": 1.75,
+    "oreAccess": ["coal", "copper", "iron", "silver", "gold", "emerald", "sapphire", "diamond"]
+  }
+]

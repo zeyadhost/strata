@@ -48,9 +48,14 @@ function baseTileAt(y: number, surfaceY: number): TileType {
 interface GemEntry { type: TileType; minY: number; maxY: number; chance: number }
 
 const GEM_TABLE: GemEntry[] = [
-  { type: TileType.COAL,    minY: LAYER_SHALLOW, maxY: WORLD_HEIGHT, chance: 0.008 },
-  { type: TileType.EMERALD, minY: LAYER_MID,     maxY: WORLD_HEIGHT, chance: 0.004 },
-  { type: TileType.DIAMOND, minY: LAYER_DEEP,    maxY: WORLD_HEIGHT, chance: 0.002 },
+  { type: TileType.COAL,     minY: LAYER_SHALLOW - 4, maxY: WORLD_HEIGHT, chance: 0.011 },
+  { type: TileType.COPPER,   minY: LAYER_SHALLOW,     maxY: LAYER_MID + 8, chance: 0.008 },
+  { type: TileType.IRON,     minY: LAYER_SHALLOW + 8, maxY: LAYER_DEEP, chance: 0.0065 },
+  { type: TileType.SILVER,   minY: LAYER_MID - 4,     maxY: WORLD_HEIGHT, chance: 0.0045 },
+  { type: TileType.GOLD,     minY: LAYER_MID + 10,    maxY: WORLD_HEIGHT, chance: 0.0038 },
+  { type: TileType.EMERALD,  minY: LAYER_MID,         maxY: WORLD_HEIGHT, chance: 0.0035 },
+  { type: TileType.SAPPHIRE, minY: LAYER_DEEP - 6,    maxY: WORLD_HEIGHT, chance: 0.0026 },
+  { type: TileType.DIAMOND,  minY: LAYER_DEEP,        maxY: WORLD_HEIGHT, chance: 0.0018 },
 ];
 
 export function generateWorld(seed: number): number[][] {

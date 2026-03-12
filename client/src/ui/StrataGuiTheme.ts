@@ -39,9 +39,9 @@ export function ensureStrataGuiTheme() {
     .strata-gui--modal {
       inset: 0;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
-      padding: 24px;
+      padding: 80px 24px 24px;
       background:
         linear-gradient(rgba(6, 9, 22, 0.7), rgba(6, 9, 22, 0.82)),
         repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0, rgba(255, 255, 255, 0.03) 2px, transparent 2px, transparent 6px),
@@ -145,9 +145,12 @@ export function ensureStrataGuiTheme() {
     }
 
     .strata-gui__close {
+      display: flex;
+      align-items: center;
+      justify-content: center;
       min-width: 42px;
       min-height: 42px;
-      padding: 8px 10px 6px;
+      padding: 0;
       border: 0;
       background: linear-gradient(180deg, #a55260 0%, #7c3144 100%);
       color: #fff0dc;
@@ -183,6 +186,7 @@ export function ensureStrataGuiTheme() {
     }
 
     .strata-gui__slot {
+      width: 112px;
       min-width: 112px;
       padding: 10px 12px 8px;
       border: 0;
@@ -197,6 +201,39 @@ export function ensureStrataGuiTheme() {
       display: grid;
       gap: 4px;
       text-align: left;
+      position: relative;
+    }
+
+    .strata-gui__slot[data-compact='true'] {
+      min-height: 74px;
+      align-content: center;
+      justify-items: center;
+      grid-auto-rows: min-content;
+      gap: 8px;
+      text-align: center;
+    }
+
+    .strata-gui__slot-media {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .strata-gui__slot[data-compact='true'] .strata-gui__slot-media {
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .strata-gui__slot-labels {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+
+    .strata-gui__slot[data-compact='true'] .strata-gui__slot-labels {
+      justify-items: center;
     }
 
     .strata-gui__slot:hover {
@@ -232,9 +269,22 @@ export function ensureStrataGuiTheme() {
       font-size: 16px;
     }
 
+    .strata-gui__slot[data-compact='true'] .strata-gui__slot-key {
+      position: absolute;
+      top: 8px;
+      left: 9px;
+      font-size: 14px;
+      z-index: 1;
+    }
+
     .strata-gui__slot-title {
       font-size: 19px;
       color: inherit;
+    }
+
+    .strata-gui__slot[data-compact='true'] .strata-gui__slot-title {
+      font-size: 16px;
+      line-height: 1.05;
     }
 
     .strata-gui__slot-copy {
@@ -242,6 +292,19 @@ export function ensureStrataGuiTheme() {
       font-size: 11px;
       line-height: 1.2;
       text-transform: uppercase;
+    }
+
+    .strata-gui__slot-tier {
+      padding: 3px 6px 2px;
+      justify-self: start;
+      background: rgba(255, 255, 255, 0.08);
+      color: #f4d679;
+      font-family: monogram, monospace;
+      font-size: 12px;
+      line-height: 1;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
     }
   `;
   document.head.appendChild(styleTag);

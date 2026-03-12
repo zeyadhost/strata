@@ -2,7 +2,7 @@ import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { World } from "./world/world";
-import { InventoryKey, InventoryState, PlayerState, TileType, WorldInitPayload } from "./types";
+import { InventoryKey, createEmptyInventoryState, InventoryState, PlayerState, TileType, WorldInitPayload } from "./types";
 
 const app = express();
 const httpServer = createServer(app);
@@ -16,20 +16,22 @@ console.log(`World generated (seed: ${world.seed}), spawn: ${world.spawnX}, ${wo
 const players = new Map<string, PlayerState>();
 const inventories = new Map<string, InventoryState>();
 
-function createEmptyInventory(): InventoryState {
-  return {
-    coal: 0,
-    emerald: 0,
-    diamond: 0,
-  };
-}
-
 function getInventoryKeyForTile(tileType: TileType): InventoryKey | null {
   switch (tileType) {
     case TileType.COAL:
       return "coal";
+    case TileType.COPPER:
+      return "copper";
+    case TileType.IRON:
+      return "iron";
+    case TileType.SILVER:
+      return "silver";
+    case TileType.GOLD:
+      return "gold";
     case TileType.EMERALD:
       return "emerald";
+    case TileType.SAPPHIRE:
+      return "sapphire";
     case TileType.DIAMOND:
       return "diamond";
     default:
@@ -47,14 +49,14 @@ io.on("connection", (socket) => {
     flipX: false,
   };
   players.set(socket.id, playerState);
-  inventories.set(socket.id, createEmptyInventory());
+  inventories.set(socket.id, createEmptyInventoryState());
 
   const payload: WorldInitPayload = {
     tiles: world.tiles,
     spawnX: world.spawnX,
     spawnY: world.spawnY,
     players: Array.from(players.values()).filter((p) => p.id !== socket.id),
-    inventory: { ...(inventories.get(socket.id) ?? createEmptyInventory()) },
+    inventory: { ...(inventories.get(socket.id) ?? createEmptyInventoryState()) },
   };
   socket.emit("world:init", payload);
 
@@ -78,7 +80,7 @@ io.on("connection", (socket) => {
     const inventoryKey = getInventoryKeyForTile(result.minedType);
     if (!inventoryKey) return;
 
-    const inventory = inventories.get(socket.id) ?? createEmptyInventory();
+    const inventory = inventories.get(socket.id) ?? createEmptyInventoryState();
     inventory[inventoryKey] += 1;
     inventories.set(socket.id, inventory);
 
