@@ -8,10 +8,10 @@ export const LAYER_MID      = 65;
 export const LAYER_DEEP     = 105;
 
 export const PLAYER_SPEED       = 160;
-export const PLAYER_JUMP_VEL    = -380;
+export const PLAYER_JUMP_VEL    = -200;
 export const PLAYER_WIDTH       = 14;
-export const PLAYER_BODY_WIDTH  = 10;
-export const PLAYER_HEIGHT      = 20;
+export const PLAYER_BODY_WIDTH  = 16;
+export const PLAYER_HEIGHT      = 28;
 
 export const TILE_TEXTURE: Record<number, string> = {
   1: "tile_grass",

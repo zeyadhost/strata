@@ -18,8 +18,8 @@ export class SettingsMenu {
   private current: GameSettings;
   private activeCategory: CategoryKey = "audio";
   private readonly onApply: (settings: GameSettings) => void;
-  private readonly iconBase = "/settings-icons";
-  private readonly pointerCursor = "url('/cursors/pointer-24.png') 1 1, pointer";
+  private readonly iconBase = "settings-icons";
+  private readonly pointerCursor = "url('cursors/pointer-24.png') 1 1, pointer";
   private readonly categoryButtons = new Map<CategoryKey, HTMLButtonElement>();
   private readonly sections = new Map<CategoryKey, HTMLElement>();
   private readonly resizeHandler = () => this.updateResponsiveLayout();
@@ -212,7 +212,6 @@ export class SettingsMenu {
     const game = this.createSection("game.png", "Control Board", [
       this.createToggleField("holdToMine", "Hold To Mine", "Keep mining while the mouse button stays down."),
       this.createToggleField("showCoordinates", "Show Coordinates", "Display the live world position readout."),
-      this.createToggleField("showOtherPlayers", "Show Other Players", "Render nearby players in the world view."),
     ]);
 
     this.sections.set("audio", audio);
@@ -467,7 +466,6 @@ export class SettingsMenu {
     this.setToggleState("pixelSnap", settings.pixelSnap);
     this.setToggleState("holdToMine", settings.holdToMine);
     this.setToggleState("showCoordinates", settings.showCoordinates);
-    this.setToggleState("showOtherPlayers", settings.showOtherPlayers);
   }
 
   private readInputs(): GameSettings {
@@ -480,7 +478,6 @@ export class SettingsMenu {
       pixelSnap: this.readToggle("pixelSnap"),
       holdToMine: this.readToggle("holdToMine"),
       showCoordinates: this.readToggle("showCoordinates"),
-      showOtherPlayers: this.readToggle("showOtherPlayers"),
     };
   }
 

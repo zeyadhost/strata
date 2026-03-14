@@ -281,9 +281,9 @@ export class ProceduralAudioManager {
       return;
     }
 
-    this.musicTracks.xnor ??= this.createMusicTrack("/music/xnor.ogg", true, 0.72);
-    this.musicTracks.sorcery ??= this.createMusicTrack("/music/sorcery.ogg", false, 0.88);
-    this.musicTracks.haul ??= this.createMusicTrack("/music/haul.ogg", true, 0.62);
+    this.musicTracks.xnor ??= this.createMusicTrack("music/xnor.ogg", true, 0.72);
+    this.musicTracks.sorcery ??= this.createMusicTrack("music/sorcery.ogg", false, 0.88);
+    this.musicTracks.haul ??= this.createMusicTrack("music/haul.ogg", true, 0.62);
     this.syncMusicVolumes();
   }
 

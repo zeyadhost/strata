@@ -18,7 +18,7 @@ function formatInventoryLabel(key: InventoryKey) {
 }
 
 function gemAssetPath(key: InventoryKey) {
-  return `/gems/${key}.png`;
+  return `gems/${key}.png`;
 }
 
 export class InventoryPanel {

@@ -9,7 +9,6 @@ export interface GameSettings {
   pixelSnap: boolean;
   holdToMine: boolean;
   showCoordinates: boolean;
-  showOtherPlayers: boolean;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -21,7 +20,6 @@ export const DEFAULT_SETTINGS: GameSettings = {
   pixelSnap: true,
   holdToMine: false,
   showCoordinates: true,
-  showOtherPlayers: true,
 };
 
 const STORAGE_KEY = "strata.settings";

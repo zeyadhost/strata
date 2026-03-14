@@ -1,6 +1,6 @@
 # Strata
 
-A browser-based multiplayer mining game. Built with Phaser 3 + Socket.io for the Hack Club Ember game jam.
+A browser-based singleplayer mining game built with Phaser 3.
 
 ## Requirements
 
@@ -19,12 +19,11 @@ npm install
 npm run dev
 ```
 
-Starts the Vite dev server (client) and the Node server concurrently.
+Starts the Vite dev server.
 
 | Service | URL |
 |---------|-----|
-| Client  | http://localhost:5173 |
-| Server  | http://localhost:3000 |
+| Game    | http://localhost:5173 |
 
 ## Build
 
@@ -32,7 +31,7 @@ Starts the Vite dev server (client) and the Node server concurrently.
 npm run build
 ```
 
-Output goes to `client/dist/` — this is what gets uploaded to itch.io.
+Output goes to `dist/`.
 
 ## Art Credits
 
@@ -46,8 +45,7 @@ Settings icons from [Crusenho Icons Essential Pack](https://crusenho.itch.io/ico
 
 ```
 strata/
-├── client/         # Phaser 3 frontend (Vite + TypeScript)
-│   └── src/
-└── server/         # Socket.io backend (Node.js + TypeScript)
-    └── src/
+├── src/            # Phaser game source (TypeScript)
+├── public/         # Static assets
+└── scripts/        # Utility scripts
 ```

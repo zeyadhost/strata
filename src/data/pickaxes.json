@@ -7,7 +7,7 @@
     "tier": 1,
     "miningSpeed": 0.75,
     "oreAccess": ["coal", "copper"],
-    "texture": "/pickaxes/wooden_pickaxe.png"
+    "texture": "pickaxes/wooden_pickaxe.png"
   },
   {
     "id": "stone-pickaxe",
@@ -17,7 +17,7 @@
     "tier": 2,
     "miningSpeed": 0.9,
     "oreAccess": ["coal", "copper", "iron"],
-    "texture": "/pickaxes/stone_pickaxe.png"
+    "texture": "pickaxes/stone_pickaxe.png"
   },
   {
     "id": "iron-pickaxe",
@@ -27,7 +27,7 @@
     "tier": 3,
     "miningSpeed": 1.2,
     "oreAccess": ["coal", "copper", "iron", "silver", "gold", "emerald"],
-    "texture": "/pickaxes/iron_pickaxe.png"
+    "texture": "pickaxes/iron_pickaxe.png"
   },
   {
     "id": "gold-pickaxe",
@@ -37,7 +37,7 @@
     "tier": 4,
     "miningSpeed": 1.45,
     "oreAccess": ["coal", "copper", "iron", "silver", "gold", "emerald", "sapphire"],
-    "texture": "/pickaxes/gold_pickaxe.png"
+    "texture": "pickaxes/gold_pickaxe.png"
   },
   {
     "id": "diamond-pickaxe",
@@ -47,6 +47,6 @@
     "tier": 5,
     "miningSpeed": 1.75,
     "oreAccess": ["coal", "copper", "iron", "silver", "gold", "emerald", "sapphire", "diamond"],
-    "texture": "/pickaxes/diamond_pickaxe.png"
+    "texture": "pickaxes/diamond_pickaxe.png"
   }
 ]

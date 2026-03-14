@@ -1,7 +1,6 @@
 import Phaser from "phaser";
-import { Socket } from "socket.io-client";
 import { ProceduralAudioManager } from "../ProceduralAudioManager";
-import { createEmptyInventoryState, INVENTORY_KEYS, InventoryKey, InventoryState, InventoryUpdatePayload, OreCollectPayload, OreCollectedPayload, OreDropPayload, TileType, TileChange, PlayerState, WorldInitPayload } from "../types";
+import { createEmptyInventoryState, INVENTORY_KEYS, InventoryKey, InventoryState, OreCollectedPayload, OreDropPayload, TileType, WorldInitPayload } from "../types";
 import { loadSettings, saveSettings, type GameSettings } from "../settings";
 import { InventoryPanel } from "../ui/InventoryPanel";
 import { HotbarPanel, type HotbarSlotKey } from "../ui/HotbarPanel";
@@ -23,9 +22,8 @@ import {
 } from "../constants/world";
 
 const RENDER_BUFFER = 3;
-const DIG_RANGE     = 1;
-const MOVE_INTERVAL = 50;
-const CURSOR_DEFAULT = "url('/cursors/cursor-24.png') 1 1, auto";
+const DIG_RANGE     = 2;
+const CURSOR_DEFAULT = "url('cursors/cursor-24.png') 1 1, auto";
 const HUD_BASE_FONT_SIZE = 18;
 const HUD_BASE_MARGIN = 16;
 const HUD_BASE_PADDING_X = 6;
@@ -52,8 +50,48 @@ const PICKAXE_SIZE = 20;
 const PICKAXE_OFFSET_X = 9;
 const PICKAXE_OFFSET_Y = 2;
 const PICKAXE_IDLE_ANGLE = 25;
-const PICKAXE_SWING_RAISED = -20;
-const PICKAXE_SWING_HIT = 55;
+
+const PLAYER_ANIM_IDLE = "player_idle";
+const PLAYER_ANIM_WALK = "player_walk";
+const PLAYER_ANIM_JUMP = "player_jump";
+const PLAYER_ANIM_FALL = "player_fall";
+const PLAYER_ANIM_MINE = "player_mine";
+
+interface PickaxeTransform {
+  x: number;
+  y: number;
+  angle: number;
+}
+
+const MINE_ANIM_OFFSETS: Record<number, PickaxeTransform> = {
+  1: { x: 5, y: -14, angle: 101 },
+  2: { x: 6.5, y: -10.5, angle: 144 },
+};
+
+const WALK_ANIM_OFFSETS: Record<number, PickaxeTransform> = {
+  1: { x: 3, y: -12.5, angle: 101 },
+  2: { x: 4, y: -6.5, angle: 113 },
+  3: { x: 7.5, y: -7.5, angle: 143 },
+  4: { x: 4, y: -6.5, angle: 119 },
+};
+
+const IDLE_ANIM_OFFSETS: Record<number, PickaxeTransform> = {
+  1: { x: 6, y: -11.5, angle: 77 },
+  2: { x: 6, y: -10.5, angle: 80 },
+  3: { x: 5.5, y: -8.5, angle: 83 },
+  4: { x: 5.5, y: -10.5, angle: 72 },
+};
+
+const JUMP_ANIM_OFFSETS: Record<number, PickaxeTransform> = {
+  1: { x: 5.5, y: -10, angle: 76 },
+  2: { x: 5.5, y: -14.5, angle: 76 },
+  3: { x: 5.5, y: -14.5, angle: 81 },
+};
+
+const FALL_ANIM_OFFSETS: Record<number, PickaxeTransform> = {
+  1: { x: 7, y: -24, angle: 69 },
+  2: { x: 6, y: -25, angle: 69 },
+};
 
 const BREAK_CRACK_PATHS: Array<Array<[number, number]>> = [
   [[8, 1], [7, 4], [8, 7], [6, 10], [4, 15]],
@@ -141,11 +179,10 @@ function gemTextureKey(item: InventoryKey) {
 }
 
 function gemAssetPath(item: InventoryKey) {
-  return `/gems/${item}.png`;
+  return `gems/${item}.png`;
 }
 
 export class GameScene extends Phaser.Scene {
-  private socket!: Socket;
   private tiles: number[][] = [];
   private spawnX = 0;
   private spawnY = 0;
@@ -153,8 +190,7 @@ export class GameScene extends Phaser.Scene {
   private worldReady = false;
   private pendingInit: WorldInitPayload | null = null;
 
-  private player!: Phaser.GameObjects.Rectangle;
-  private otherPlayers = new Map<string, Phaser.GameObjects.Rectangle>();
+  private player!: Phaser.GameObjects.Sprite;
   private settingsMenu!: SettingsMenu;
   private audioManager!: ProceduralAudioManager;
 
@@ -171,7 +207,6 @@ export class GameScene extends Phaser.Scene {
     right: Phaser.Input.Keyboard.Key;
   };
 
-  private moveTimer = 0;
   private pointerMining = false;
   private wasGrounded = false;
   private loadingText!: Phaser.GameObjects.Text;
@@ -186,34 +221,32 @@ export class GameScene extends Phaser.Scene {
   private pendingDigTiles = new Set<number>();
   private oreDrops = new Map<string, OreDropState>();
   private pickaxeSprite: Phaser.GameObjects.Image | null = null;
-  private pickaxeSwingTween: Phaser.Tweens.Tween | null = null;
   private pickaxeBaseScale = 1;
   private facingLeft = false;
-  private lastSwingFacingLeft: boolean | null = null;
+  private nextOreDropId = 1;
   private inventory: InventoryState = createEmptyInventoryState();
 
   constructor() {
     super({ key: "GameScene" });
   }
 
-  init(data: { socket: Socket; worldInit: WorldInitPayload }) {
-    this.socket = data.socket;
+  init(data: { worldInit: WorldInitPayload }) {
     this.pendingInit = data.worldInit ?? null;
   }
 
   preload() {
-    this.load.image("tile_grass", "/tiles/grass.png");
-    this.load.image("tile_dirt", "/tiles/dirt.png");
-    this.load.image("tile_stone", "/tiles/stone.png");
-    this.load.image(DIRT_STONE_TRANSITION_TEXTURE, "/tiles/dirt_stone_transition.png");
-    this.load.image("ore_coal", "/ores/coal.png");
-    this.load.image("ore_copper", "/ores/copper.png");
-    this.load.image("ore_iron", "/ores/iron.png");
-    this.load.image("ore_silver", "/ores/silver.png");
-    this.load.image("ore_gold", "/ores/gold.png");
-    this.load.image("ore_emerald", "/ores/emerald.png");
-    this.load.image("ore_sapphire", "/ores/sapphire.png");
-    this.load.image("ore_diamond", "/ores/diamond.png");
+    this.load.image("tile_grass", "tiles/grass.png");
+    this.load.image("tile_dirt", "tiles/dirt.png");
+    this.load.image("tile_stone", "tiles/stone.png");
+    this.load.image(DIRT_STONE_TRANSITION_TEXTURE, "tiles/dirt_stone_transition.png");
+    this.load.image("ore_coal", "ores/coal.png");
+    this.load.image("ore_copper", "ores/copper.png");
+    this.load.image("ore_iron", "ores/iron.png");
+    this.load.image("ore_silver", "ores/silver.png");
+    this.load.image("ore_gold", "ores/gold.png");
+    this.load.image("ore_emerald", "ores/emerald.png");
+    this.load.image("ore_sapphire", "ores/sapphire.png");
+    this.load.image("ore_diamond", "ores/diamond.png");
     for (const key of INVENTORY_KEYS) {
       this.load.image(gemTextureKey(key), gemAssetPath(key));
     }
@@ -225,6 +258,7 @@ export class GameScene extends Phaser.Scene {
     this.input.setDefaultCursor(CURSOR_DEFAULT);
     this.audioManager = new ProceduralAudioManager(this.settings);
     this.ensureBreakTextureAtlas();
+    this.loadPlayerGifs();
 
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.wasd = {
@@ -309,12 +343,9 @@ export class GameScene extends Phaser.Scene {
       this.hotbarPanel.destroy();
       this.clearOreDrops();
       this.breakEffect.destroy();
-      this.pickaxeSwingTween?.stop();
       this.pickaxeSprite?.destroy();
       this.pickaxeSprite = null;
     });
-
-    this.registerSocketEvents();
 
     if (this.pendingInit) {
       this.applyWorldInit(this.pendingInit);
@@ -322,51 +353,61 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private registerSocketEvents() {
-    this.socket.on("world:init", (payload: WorldInitPayload) => {
-      this.applyWorldInit(payload);
+  private async loadGifIntoTexture(url: string, textureKey: string, animKey: string, frameRate: number) {
+    if (typeof ImageDecoder === "undefined") {
+      this.load.image(textureKey, url);
+      this.load.once("complete", () => {});
+      this.load.start();
+      return;
+    }
+
+    const response = await fetch(url);
+    const decoder = new ImageDecoder({ data: response.body!, type: "image/gif" });
+    await decoder.completed;
+
+    const frameCount = decoder.tracks.selectedTrack!.frameCount;
+    const firstFrame = await decoder.decode({ frameIndex: 0 });
+    const fw = firstFrame.image.displayWidth;
+    const fh = firstFrame.image.displayHeight;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = fw * frameCount;
+    canvas.height = fh;
+    const ctx = canvas.getContext("2d")!;
+    ctx.imageSmoothingEnabled = false;
+
+    for (let i = 0; i < frameCount; i++) {
+      const result = await decoder.decode({ frameIndex: i });
+      ctx.drawImage(result.image, i * fw, 0);
+      result.image.close();
+    }
+
+    const texture = this.textures.addCanvas(textureKey, canvas);
+    if (!texture) return;
+    
+    const frames: Phaser.Types.Animations.AnimationFrame[] = [];
+    for (let i = 0; i < frameCount; i++) {
+      const frameName = `${textureKey}_frame_${i}`;
+      texture.add(frameName, 0, i * fw, 0, fw, fh);
+      frames.push({ key: textureKey, frame: frameName });
+    }
+
+    this.anims.create({
+      key: animKey,
+      frames,
+      frameRate,
+      repeat: -1,
     });
 
-    this.socket.on("tile:update", (change: TileChange) => {
-      if (!this.tiles[change.y]) return;
-      this.tiles[change.y][change.x] = change.type;
-      this.pendingDigTiles.delete(this.getTileKey(change.x, change.y));
+    decoder.close();
+  }
 
-      if (this.breakTarget?.x === change.x && this.breakTarget?.y === change.y) {
-        this.clearBreakTarget();
-      }
-
-      this.invalidateTileNeighborhood(change.x, change.y);
-
-      this.lastViewLeft = -999;
-      this.lastViewTop  = -999;
-    });
-
-    this.socket.on("inventory:update", ({ inventory }: InventoryUpdatePayload) => {
-      this.inventory = { ...inventory };
-      this.inventoryPanel.setInventory(this.inventory);
-    });
-
-    this.socket.on("ore:dropped", (payload: OreDropPayload) => {
-      this.spawnOreDrop(payload);
-    });
-
-    this.socket.on("ore:collected", (payload: OreCollectedPayload) => {
-      this.handleOreCollected(payload);
-    });
-
-    this.socket.on("player:joined", (p: PlayerState) => this.spawnOtherPlayer(p));
-
-    this.socket.on("player:state", (p: PlayerState) => {
-      const sprite = this.otherPlayers.get(p.id);
-      if (!sprite) return;
-      sprite.setPosition(p.x, p.y);
-    });
-
-    this.socket.on("player:left", ({ id }: { id: string }) => {
-      this.otherPlayers.get(id)?.destroy();
-      this.otherPlayers.delete(id);
-    });
+  private loadPlayerGifs() {
+    this.loadGifIntoTexture("player/idle.gif", "tex_player_idle", PLAYER_ANIM_IDLE, 8);
+    this.loadGifIntoTexture("player/walk.gif", "tex_player_walk", PLAYER_ANIM_WALK, 12);
+    this.loadGifIntoTexture("player/jump.gif", "tex_player_jump", PLAYER_ANIM_JUMP, 10);
+    this.loadGifIntoTexture("player/fall.gif", "tex_player_fall", PLAYER_ANIM_FALL, 10);
+    this.loadGifIntoTexture("player/mine.gif", "tex_player_mine", PLAYER_ANIM_MINE, 10);
   }
 
   private applyWorldInit(payload: WorldInitPayload) {
@@ -381,8 +422,6 @@ export class GameScene extends Phaser.Scene {
     this.loadingText.destroy();
     this.initPlayer();
     this.inventoryPanel.setInventory(this.inventory);
-
-    for (const p of payload.players) this.spawnOtherPlayer(p);
 
     this.worldReady = true;
   }
@@ -407,13 +446,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private initPlayer() {
-    this.player = this.add.rectangle(this.spawnX, this.spawnY, PLAYER_WIDTH, PLAYER_HEIGHT, this.getPlayerColor(this.socket.id ?? "local"));
-    this.player.setStrokeStyle(2, 0x0f172a, 0.9);
+    this.player = this.add.sprite(this.spawnX + PLAYER_WIDTH / 2, this.spawnY + PLAYER_HEIGHT / 2, "tex_player_idle", 0);
     this.player.setDepth(10);
+    
+    this.player.setOrigin(0.5, 1.0);
     this.physics.add.existing(this.player);
     const body = this.player.body as Phaser.Physics.Arcade.Body;
     body.setSize(PLAYER_BODY_WIDTH, PLAYER_HEIGHT);
-    body.setOffset((PLAYER_WIDTH - PLAYER_BODY_WIDTH) * 0.5, 0);
+    const spriteHeight = 32;
+    const spriteWidth = 16;
+    body.setOffset((spriteWidth - PLAYER_BODY_WIDTH) * 0.5, spriteHeight - PLAYER_HEIGHT);
     body.setCollideWorldBounds(false);
     this.wasGrounded = false;
 
@@ -421,26 +463,12 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setRoundPixels(true);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
-    this.physics.add.collider(this.player, this.tileGroup, undefined, (_playerObj, tileObj) => {
-      const pb = this.player.body as Phaser.Physics.Arcade.Body;
-      const tb = (tileObj as Phaser.Physics.Arcade.Image).body as Phaser.Physics.Arcade.StaticBody;
-      const inXRange = pb.center.x >= tb.position.x && pb.center.x <= tb.position.x + tb.width;
-      const inYRange = pb.center.y >= tb.position.y && pb.center.y <= tb.position.y + tb.height;
-      return inXRange || inYRange;
-    });
+    this.physics.add.collider(this.player, this.tileGroup);
     this.createWorldBarriers();
 
     this.applySettings(this.settings);
     this.initPickaxe();
     this.updateViewport(true);
-  }
-
-  private spawnOtherPlayer(p: PlayerState) {
-    const sprite = this.add.rectangle(p.x, p.y, PLAYER_WIDTH, PLAYER_HEIGHT, this.getPlayerColor(p.id));
-    sprite.setStrokeStyle(2, 0x0f172a, 0.9);
-    sprite.setDepth(10);
-    sprite.setVisible(this.settings.showOtherPlayers);
-    this.otherPlayers.set(p.id, sprite);
   }
 
   private applySettings(settings: GameSettings) {
@@ -455,22 +483,9 @@ export class GameScene extends Phaser.Scene {
     }
     this.updateHudLayout();
     this.updateCoordinatesText();
-
-    for (const sprite of this.otherPlayers.values()) {
-      sprite.setVisible(this.settings.showOtherPlayers);
-    }
   }
 
-  private getPlayerColor(id: string): number {
-    let hash = 0;
-    for (let index = 0; index < id.length; index++) {
-      hash = ((hash << 5) - hash + id.charCodeAt(index)) | 0;
-    }
 
-    const hue = Math.abs(hash) % 360;
-    const color = Phaser.Display.Color.HSLToColor(hue / 360, 0.75, 0.58);
-    return Phaser.Display.Color.GetColor(color.red, color.green, color.blue);
-  }
 
   private spawnOreDrop(payload: OreDropPayload) {
     this.destroyOreDrop(payload.dropId);
@@ -553,8 +568,44 @@ export class GameScene extends Phaser.Scene {
       if (distance <= ORE_COLLECT_RADIUS) {
         drop.collecting = true;
         drop.sprite.setVisible(false);
-        this.socket.emit("ore:collect", { dropId: drop.payload.dropId } satisfies OreCollectPayload);
+        this.collectOreDrop(drop.payload);
       }
+    }
+  }
+
+  private collectOreDrop(drop: OreDropPayload) {
+    this.inventory[drop.item] += 1;
+    this.inventoryPanel.setInventory(this.inventory);
+
+    this.handleOreCollected({
+      dropId: drop.dropId,
+      item: drop.item,
+      amount: 1,
+      x: drop.x,
+      y: drop.y,
+    });
+  }
+
+  private getInventoryKeyForTile(tileType: TileType): InventoryKey | null {
+    switch (tileType) {
+      case TileType.COAL:
+        return "coal";
+      case TileType.COPPER:
+        return "copper";
+      case TileType.IRON:
+        return "iron";
+      case TileType.SILVER:
+        return "silver";
+      case TileType.GOLD:
+        return "gold";
+      case TileType.EMERALD:
+        return "emerald";
+      case TileType.SAPPHIRE:
+        return "sapphire";
+      case TileType.DIAMOND:
+        return "diamond";
+      default:
+        return null;
     }
   }
 
@@ -629,16 +680,10 @@ export class GameScene extends Phaser.Scene {
 
     const isVisible = this.hasEquippedPickaxe();
     this.pickaxeSprite.setVisible(isVisible);
-    if (!isVisible) {
-      this.pickaxeSwingTween?.stop();
-      this.pickaxeSwingTween = null;
-    }
   }
 
   private initPickaxe() {
     this.pickaxeSprite?.destroy();
-    this.pickaxeSwingTween?.stop();
-    this.pickaxeSwingTween = null;
     const sideX = this.facingLeft ? -PICKAXE_OFFSET_X : PICKAXE_OFFSET_X;
     this.pickaxeSprite = this.add.image(
       this.player.x + sideX,
@@ -662,36 +707,49 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.pickaxeSprite.setVisible(true);
-    const sideX = this.facingLeft ? -PICKAXE_OFFSET_X : PICKAXE_OFFSET_X;
-    this.pickaxeSprite.setPosition(this.player.x + sideX, this.player.y + PICKAXE_OFFSET_Y);
+    const currentAnimKey = this.player.anims.currentAnim?.key;
+    const isMining = currentAnimKey === PLAYER_ANIM_MINE;
+    const isWalking = currentAnimKey === PLAYER_ANIM_WALK;
+    const isIdle = currentAnimKey === PLAYER_ANIM_IDLE;
+    const isJumping = currentAnimKey === PLAYER_ANIM_JUMP;
+    const isFalling = currentAnimKey === PLAYER_ANIM_FALL;
+    const frameIndex = this.player.anims.currentFrame?.index || 1;
+
+    let targetX = PICKAXE_OFFSET_X;
+    let targetY = PICKAXE_OFFSET_Y;
+    let targetAngle = PICKAXE_IDLE_ANGLE;
+
+    if (isMining && MINE_ANIM_OFFSETS[frameIndex]) {
+      const transform = MINE_ANIM_OFFSETS[frameIndex];
+      targetX = transform.x;
+      targetY = transform.y;
+      targetAngle = transform.angle;
+    } else if (isWalking && WALK_ANIM_OFFSETS[frameIndex]) {
+      const transform = WALK_ANIM_OFFSETS[frameIndex];
+      targetX = transform.x;
+      targetY = transform.y;
+      targetAngle = transform.angle;
+    } else if (isIdle && IDLE_ANIM_OFFSETS[frameIndex]) {
+      const transform = IDLE_ANIM_OFFSETS[frameIndex];
+      targetX = transform.x;
+      targetY = transform.y;
+      targetAngle = transform.angle;
+    } else if (isJumping && JUMP_ANIM_OFFSETS[frameIndex]) {
+      const transform = JUMP_ANIM_OFFSETS[frameIndex];
+      targetX = transform.x;
+      targetY = transform.y;
+      targetAngle = transform.angle;
+    } else if (isFalling && FALL_ANIM_OFFSETS[frameIndex]) {
+      const transform = FALL_ANIM_OFFSETS[frameIndex];
+      targetX = transform.x;
+      targetY = transform.y;
+      targetAngle = transform.angle;
+    }
+
+    const sideX = this.facingLeft ? -targetX : targetX;
+    this.pickaxeSprite.setPosition(this.player.x + sideX, this.player.y + targetY);
     this.pickaxeSprite.scaleX = this.facingLeft ? -this.pickaxeBaseScale : this.pickaxeBaseScale;
-  }
-
-  private startPickaxeSwingLoop() {
-    if (!this.pickaxeSprite || !this.hasEquippedPickaxe()) return;
-    this.pickaxeSwingTween?.stop();
-    this.lastSwingFacingLeft = this.facingLeft;
-    this.pickaxeSprite.setAngle(this.pickaxeAngle(PICKAXE_SWING_RAISED));
-    this.pickaxeSwingTween = this.tweens.add({
-      targets: this.pickaxeSprite,
-      angle: this.pickaxeAngle(PICKAXE_SWING_HIT),
-      ease: "Cubic.InOut",
-      duration: 150,
-      yoyo: true,
-      repeat: -1,
-    });
-  }
-
-  private tweenPickaxeIdle() {
-    if (!this.pickaxeSprite || !this.hasEquippedPickaxe()) return;
-    this.pickaxeSwingTween?.stop();
-    this.lastSwingFacingLeft = null;
-    this.pickaxeSwingTween = this.tweens.add({
-      targets: this.pickaxeSprite,
-      angle: this.pickaxeAngle(PICKAXE_IDLE_ANGLE),
-      ease: "Cubic.Out",
-      duration: 200,
-    });
+    this.pickaxeSprite.setAngle(this.pickaxeAngle(targetAngle));
   }
 
   private invalidateTileSprite(tx: number, ty: number) {
@@ -829,7 +887,6 @@ export class GameScene extends Phaser.Scene {
     this.updateBreakEffectStage(0);
     this.audioManager.playDigHit(target.x * TILE_SIZE + TILE_SIZE / 2, this.player.x, 0);
     this.spawnBreakParticles(target, 3, 0.45);
-    this.startPickaxeSwingLoop();
   }
 
   private ensureBreakTextureAtlas() {
@@ -898,17 +955,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getDigTargetAt(tx: number, ty: number): BreakTarget | null {
-    if (!this.worldReady || !this.player) return null;
+    if (!this.worldReady || !this.player || !this.player.body) return null;
 
-    const ptx = Math.floor(this.player.x / TILE_SIZE);
-    const pty = Math.floor(this.player.y / TILE_SIZE);
+    const body = this.player.body as Phaser.Physics.Arcade.Body;
+    const ptx = Math.floor(body.center.x / TILE_SIZE);
+    const pty = Math.floor(body.center.y / TILE_SIZE);
 
     const dx = tx - ptx;
     const dy = ty - pty;
 
-    if (dy < 0 && dx === 0) return null;
-    if (Math.abs(dx) > DIG_RANGE || dy > DIG_RANGE) return null;
-    if (dy < 0 && Math.abs(dy) > 1) return null;
+    if (Math.abs(dx) > DIG_RANGE || Math.abs(dy) > DIG_RANGE) return null;
     if (this.tiles[ty]?.[tx] === TileType.AIR) return null;
     if (this.pendingDigTiles.has(this.getTileKey(tx, ty))) return null;
 
@@ -1021,7 +1077,6 @@ export class GameScene extends Phaser.Scene {
     this.breakElapsedMs = 0;
     this.breakEffectStage = -1;
     this.breakEffect.setVisible(false);
-    this.tweenPickaxeIdle();
   }
 
   private updateBreakEffectStage(progress: number) {
@@ -1078,10 +1133,29 @@ export class GameScene extends Phaser.Scene {
   }
 
   private completeBreak(target: BreakTarget) {
-    this.pendingDigTiles.add(this.getTileKey(target.x, target.y));
+    const tileKey = this.getTileKey(target.x, target.y);
+    this.pendingDigTiles.add(tileKey);
     this.audioManager.playDig(target.x * TILE_SIZE + TILE_SIZE / 2, this.player.x);
     this.spawnBreakParticles(target, 8, 1);
-    this.socket.emit("tile:dig", { x: target.x, y: target.y });
+
+    if (this.tiles[target.y]?.[target.x] !== TileType.AIR) {
+      this.tiles[target.y][target.x] = TileType.AIR;
+      this.invalidateTileNeighborhood(target.x, target.y);
+      this.lastViewLeft = -999;
+      this.lastViewTop = -999;
+
+      const inventoryKey = this.getInventoryKeyForTile(target.type);
+      if (inventoryKey) {
+        this.spawnOreDrop({
+          dropId: `drop-${this.nextOreDropId++}`,
+          item: inventoryKey,
+          x: target.x,
+          y: target.y,
+        });
+      }
+    }
+
+    this.pendingDigTiles.delete(tileKey);
     this.clearBreakTarget();
   }
 
@@ -1234,11 +1308,6 @@ export class GameScene extends Phaser.Scene {
     const grounded = body.blocked.down || body.touching.down;
 
     this.updateOreDrops(delta);
-    this.updatePickaxe();
-
-    if (this.breakTarget && this.lastSwingFacingLeft !== null && this.lastSwingFacingLeft !== this.facingLeft) {
-      this.startPickaxeSwingLoop();
-    }
 
     if (this.settingsMenu.isOpen() || this.inventoryPanel.isOpen()) {
       body.setVelocityX(0);
@@ -1294,14 +1363,24 @@ export class GameScene extends Phaser.Scene {
     }
     this.wasGrounded = grounded;
 
-    this.moveTimer += delta;
-    if (this.moveTimer >= MOVE_INTERVAL) {
-      this.socket.emit("player:move", {
-        x: this.player.x,
-        y: this.player.y,
-        flipX: false,
-      });
-      this.moveTimer = 0;
+    this.updatePickaxe();
+
+    // Update Player Animation
+    this.player.setFlipX(this.facingLeft);
+    const hasAnims = this.anims.exists(PLAYER_ANIM_IDLE);
+    
+    if (hasAnims) {
+      if (this.breakTarget) {
+        this.player.play(PLAYER_ANIM_MINE, true);
+      } else if (body.velocity.y > 10 && !grounded) {
+        this.player.play(PLAYER_ANIM_FALL, true);
+      } else if (body.velocity.y < -10 && !grounded) {
+        this.player.play(PLAYER_ANIM_JUMP, true);
+      } else if (Math.abs(body.velocity.x) > 0 && grounded) {
+        this.player.play(PLAYER_ANIM_WALK, true);
+      } else if (grounded) {
+        this.player.play(PLAYER_ANIM_IDLE, true);
+      }
     }
   }
 }
