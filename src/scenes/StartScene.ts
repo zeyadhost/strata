@@ -2,8 +2,9 @@ import Phaser from "phaser";
 import { StorageManager } from "../state/StorageManager";
 import { PlayerSaveData } from "../types";
 import { ensureRetroGuiTheme, destroyRetroGuiThemeIfUnused } from "../ui/RetroStartTheme";
+import { loadSettings, saveSettings, GameSettings } from "../settings";
 
-type MenuState = "MAIN" | "MULTIPLAYER" | "CHARACTER" | "SETTINGS";
+type MenuState = "MAIN" | "CHARACTER" | "SETTINGS";
 
 const ACCESSORIES = [
   { key: "none",                   label: "NONE",     file: null },
@@ -20,6 +21,7 @@ export class StartScene extends Phaser.Scene {
   private uiContainer?: HTMLDivElement;
   private saveData!: PlayerSaveData;
   private currentMenu: MenuState = "MAIN";
+  private pendingSettings!: GameSettings;
 
   constructor() {
     super({ key: "StartScene" });
@@ -27,30 +29,9 @@ export class StartScene extends Phaser.Scene {
 
   create() {
     this.saveData = StorageManager.load() || StorageManager.generateDefaultSave();
+    this.pendingSettings = loadSettings();
     this.cameras.main.setBackgroundColor("#1a1c19");
-
-    const splashTitle = this.add.text(this.scale.width / 2, this.scale.height / 2 - 20, "STRATA", {
-      fontFamily: "monogram, monospace",
-      fontSize: "72px",
-      color: "#e0f0d5"
-    }).setOrigin(0.5).setAlpha(0);
-
-    const splashSub = this.add.text(this.scale.width / 2, this.scale.height / 2 + 30, "INITIALIZING SYSTEM...", {
-      fontFamily: "monogram, monospace",
-      fontSize: "24px",
-      color: "#e0f0d5"
-    }).setOrigin(0.5).setAlpha(0);
-
-    this.tweens.add({
-      targets: [splashTitle, splashSub],
-      alpha: 1,
-      duration: 1200,
-      ease: "Sine.easeInOut",
-      yoyo: true,
-      hold: 800,
-      onComplete: () => this.openMenuContainer()
-    });
-
+    this.openMenuContainer();
     this.events.on("updateSaveData", () => StorageManager.save(this.saveData));
   }
 
@@ -89,10 +70,9 @@ export class StartScene extends Phaser.Scene {
     panel.appendChild(menu);
 
     switch (this.currentMenu) {
-      case "MAIN":        this.renderMainMenu(title, menu);        break;
-      case "MULTIPLAYER": this.renderMultiplayerMenu(title, menu); break;
-      case "CHARACTER":   this.renderCharacterMenu(title, menu);   break;
-      case "SETTINGS":    this.renderSettingsMenu(title, menu);    break;
+      case "MAIN":      this.renderMainMenu(title, menu);      break;
+      case "CHARACTER": this.renderCharacterMenu(title, menu); break;
+      case "SETTINGS":  this.renderSettingsMenu(title, menu);  break;
     }
 
     this.uiContainer.appendChild(panel);
@@ -102,10 +82,9 @@ export class StartScene extends Phaser.Scene {
     title.textContent = "STRATA";
 
     const items: [string, () => void][] = [
-      ["PLAY OFFLINE",      () => this.startGame(true, undefined, true)],
-      ["LOCAL MULTIPLAYER", () => { this.currentMenu = "MULTIPLAYER"; this.renderCurrentState(); }],
-      ["CHARACTER",         () => { this.currentMenu = "CHARACTER";   this.renderCurrentState(); }],
-      ["SETTINGS",          () => { this.currentMenu = "SETTINGS";    this.renderCurrentState(); }],
+      ["PLAY",      () => this.startGame()],
+      ["CHARACTER", () => { this.currentMenu = "CHARACTER"; this.renderCurrentState(); }],
+      ["SETTINGS",  () => { this.currentMenu = "SETTINGS";  this.renderCurrentState(); }],
     ];
 
     for (const [label, handler] of items) {
@@ -115,53 +94,6 @@ export class StartScene extends Phaser.Scene {
       btn.onclick = handler;
       menu.appendChild(btn);
     }
-  }
-
-  private renderMultiplayerMenu(title: HTMLElement, menu: HTMLElement) {
-    title.textContent = "MULTIPLAYER";
-
-    const btnHost = document.createElement("button");
-    btnHost.className = "retro-btn";
-    btnHost.textContent = "HOST LOBBY";
-    btnHost.onclick = () => this.startGame(true, undefined, false);
-
-    const divider = document.createElement("div");
-    divider.className = "retro-divider";
-
-    const joinRow = document.createElement("div");
-    joinRow.className = "retro-row";
-
-    const joinInputWrap = document.createElement("div");
-    joinInputWrap.className = "retro-input-wrap";
-    joinInputWrap.style.flex = "2";
-
-    const joinInput = document.createElement("input");
-    joinInput.className = "retro-input";
-    joinInput.placeholder = "CODE...";
-    joinInput.maxLength = 6;
-    joinInputWrap.appendChild(joinInput);
-
-    const btnJoin = document.createElement("button");
-    btnJoin.className = "retro-btn";
-    btnJoin.textContent = "JOIN";
-    btnJoin.style.flex = "1";
-    btnJoin.onclick = () => {
-      const code = joinInput.value.trim().toUpperCase();
-      if (code.length > 0) this.startGame(false, code, false);
-    };
-
-    joinRow.appendChild(joinInputWrap);
-    joinRow.appendChild(btnJoin);
-
-    const btnBack = document.createElement("button");
-    btnBack.className = "retro-btn retro-btn--back";
-    btnBack.textContent = "BACK";
-    btnBack.onclick = () => { this.currentMenu = "MAIN"; this.renderCurrentState(); };
-
-    menu.appendChild(btnHost);
-    menu.appendChild(divider);
-    menu.appendChild(joinRow);
-    menu.appendChild(btnBack);
   }
 
   private renderCharacterMenu(title: HTMLElement, menu: HTMLElement) {
@@ -198,17 +130,10 @@ export class StartScene extends Phaser.Scene {
         const accImg = new Image();
         accImg.onload = () => {
           const o = ACCESSORY_IDLE_OFFSET;
-          const REST_Y = -26.5;
-
-          const playerCenterX = CANVAS_W / 2;
-          const playerBottomY = CANVAS_H;
-
           const accDisplayW = o.w * S;
           const accDisplayH = o.h * S;
-
-          const accX = playerCenterX + o.x * S - o.originX * accDisplayW;
-          const accY = playerBottomY + REST_Y * S - o.originY * accDisplayH;
-
+          const accX = CANVAS_W / 2 + o.x * S - o.originX * accDisplayW;
+          const accY = CANVAS_H + o.y * S - o.originY * accDisplayH;
           ctx.drawImage(accImg, 0, 0, accImg.naturalWidth, accImg.naturalHeight,
             accX, accY, accDisplayW, accDisplayH);
         };
@@ -246,57 +171,109 @@ export class StartScene extends Phaser.Scene {
     previewSection.appendChild(accRow);
     menu.appendChild(previewSection);
 
-    const nameLabel = document.createElement("div");
-    nameLabel.className = "retro-label";
-    nameLabel.textContent = "IDENTIFIER";
-
-    const nameInputWrap = document.createElement("div");
-    nameInputWrap.className = "retro-input-wrap";
-
-    const nameInput = document.createElement("input");
-    nameInput.className = "retro-input";
-    nameInput.value = this.saveData.username;
-    nameInput.maxLength = 10;
-
-    const tagDisplay = document.createElement("span");
-    tagDisplay.className = "retro-tag";
-    tagDisplay.textContent = this.saveData.tag;
-
-    nameInput.addEventListener("input", () => {
-      this.saveData.username = nameInput.value || "MINER";
-      this.events.emit("updateSaveData");
-    });
-
-    nameInputWrap.appendChild(nameInput);
-    nameInputWrap.appendChild(tagDisplay);
-
     const btnBack = document.createElement("button");
     btnBack.className = "retro-btn retro-btn--back";
     btnBack.textContent = "BACK";
     btnBack.onclick = () => { this.currentMenu = "MAIN"; this.renderCurrentState(); };
 
-    menu.appendChild(nameLabel);
-    menu.appendChild(nameInputWrap);
     menu.appendChild(btnBack);
   }
 
   private renderSettingsMenu(title: HTMLElement, menu: HTMLElement) {
     title.textContent = "SETTINGS";
+    this.pendingSettings = loadSettings();
 
-    const wipText = document.createElement("div");
-    wipText.className = "retro-label retro-label--center";
-    wipText.textContent = "NO SETTINGS AVAILABLE";
+    const fields: { label: string; key: keyof GameSettings; type: "slider" | "toggle" | "select"; min?: number; max?: number; step?: number; unit?: string; options?: { label: string; value: string }[] }[] = [
+      { label: "MASTER VOL",   key: "masterVolume",   type: "slider", min: 0, max: 100, step: 5, unit: "%" },
+      { label: "AMBIENCE VOL", key: "ambienceVolume", type: "slider", min: 0, max: 100, step: 5, unit: "%" },
+      { label: "SFX VOL",      key: "sfxVolume",      type: "slider", min: 0, max: 100, step: 5, unit: "%" },
+      { label: "FOV",          key: "fov",            type: "slider", min: 0.75, max: 2, step: 0.05, unit: "x" },
+      { label: "PIXEL SNAP",   key: "pixelSnap",      type: "toggle" },
+      { label: "HOLD TO MINE", key: "holdToMine",     type: "toggle" },
+      { label: "SHOW COORDS",  key: "showCoordinates", type: "toggle" },
+
+    ];
+
+    for (const field of fields) {
+      const row = document.createElement("div");
+      row.className = "retro-settings-row";
+
+      const label = document.createElement("span");
+      label.className = "retro-settings-label";
+      label.textContent = field.label;
+
+      if (field.type === "slider") {
+        const value = document.createElement("span");
+        value.className = "retro-settings-value";
+        const current = this.pendingSettings[field.key] as number;
+        const decimals = field.step! < 1 ? 2 : 0;
+        value.textContent = `${current.toFixed(decimals)}${field.unit || ""}`;
+
+        const input = document.createElement("input");
+        input.type = "range";
+        input.className = "retro-range";
+        input.min = String(field.min);
+        input.max = String(field.max);
+        input.step = String(field.step);
+        input.value = String(current);
+        input.oninput = () => {
+          const v = Number(input.value);
+          (this.pendingSettings as any)[field.key] = v;
+          value.textContent = `${v.toFixed(decimals)}${field.unit || ""}`;
+        };
+        row.appendChild(label);
+        row.appendChild(value);
+        row.appendChild(input);
+      } else if (field.type === "toggle") {
+        const btn = document.createElement("button");
+        btn.className = "retro-btn retro-btn--acc";
+        const on = this.pendingSettings[field.key] as boolean;
+        btn.textContent = on ? "ON" : "OFF";
+        if (on) btn.classList.add("retro-btn--active");
+        btn.onclick = () => {
+          (this.pendingSettings as any)[field.key] = !this.pendingSettings[field.key];
+          this.renderCurrentState();
+        };
+        row.appendChild(label);
+        row.appendChild(btn);
+      } else if (field.type === "select") {
+        const btn = document.createElement("button");
+        btn.className = "retro-btn retro-btn--acc";
+        const current = this.pendingSettings[field.key] as string;
+        const opt = field.options!.find(o => o.value === current) || field.options![0];
+        btn.textContent = opt.label;
+        btn.classList.add("retro-btn--active");
+        btn.onclick = () => {
+          const idx = field.options!.findIndex(o => o.value === this.pendingSettings[field.key] as string);
+          const next = field.options![(idx + 1) % field.options!.length];
+          (this.pendingSettings as any)[field.key] = next.value;
+          this.renderCurrentState();
+        };
+        row.appendChild(label);
+        row.appendChild(btn);
+      }
+
+      menu.appendChild(row);
+    }
+
+    const btnApply = document.createElement("button");
+    btnApply.className = "retro-btn";
+    btnApply.textContent = "APPLY";
+    btnApply.onclick = () => {
+      saveSettings(this.pendingSettings);
+      this.currentMenu = "MAIN";
+      this.renderCurrentState();
+    };
+    menu.appendChild(btnApply);
 
     const btnBack = document.createElement("button");
     btnBack.className = "retro-btn retro-btn--back";
     btnBack.textContent = "BACK";
     btnBack.onclick = () => { this.currentMenu = "MAIN"; this.renderCurrentState(); };
-
-    menu.appendChild(wipText);
     menu.appendChild(btnBack);
   }
 
-  private startGame(isHost: boolean, lobbyCode?: string, isOffline = false) {
+  private startGame() {
     if (this.uiContainer) {
       this.uiContainer.style.opacity = "0";
       setTimeout(() => {
@@ -310,7 +287,7 @@ export class StartScene extends Phaser.Scene {
     this.cameras.main.fadeOut(400, 26, 28, 25);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       destroyRetroGuiThemeIfUnused();
-      this.scene.start("BootScene", { isHost, lobbyCode, saveData: this.saveData, isOffline });
+      this.scene.start("BootScene", { saveData: this.saveData });
     });
   }
 }

@@ -6,7 +6,8 @@ export type PickaxeId =
   | "stone-pickaxe"
   | "iron-pickaxe"
   | "gold-pickaxe"
-  | "diamond-pickaxe";
+  | "diamond-pickaxe"
+  | "flaming-pickaxe";
 
 interface PickaxeDataEntry {
   id: PickaxeId;
@@ -41,6 +42,7 @@ const PICKAXE_VISUALS: Record<PickaxeId, PickaxeVisual> = {
   "iron-pickaxe": { accentColor: "#c9d4e3" },
   "gold-pickaxe": { accentColor: "#ffcf5e" },
   "diamond-pickaxe": { accentColor: "#7de5ff" },
+  "flaming-pickaxe": { accentColor: "#ff6a33" },
 };
 
 const PICKAXE_DATA = pickaxeData as PickaxeDataEntry[];

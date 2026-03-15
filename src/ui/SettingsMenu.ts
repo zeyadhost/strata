@@ -198,10 +198,6 @@ export class SettingsMenu {
       this.createSliderField("masterVolume", "Master Volume", "Overall loudness for the full game mix.", 0, 100, 1, "%", 0),
       this.createSliderField("ambienceVolume", "Ambience Volume", "Wind, cave air, and passive world sounds.", 0, 100, 1, "%", 0),
       this.createSliderField("sfxVolume", "SFX Volume", "Mining hits, pickups, movement, and feedback.", 0, 100, 1, "%", 0),
-      this.createSelectField("outputMode", "Output Mode", "Pick a speaker layout for the current device.", [
-        { label: "Stereo", value: "stereo" },
-        { label: "Mono", value: "mono" },
-      ]),
     ]);
 
     const video = this.createSection("video.png", "View Rig", [
@@ -304,69 +300,7 @@ export class SettingsMenu {
     return row.element;
   }
 
-  private createSelectField(
-    name: keyof GameSettings,
-    label: string,
-    description: string,
-    options: Array<{ label: string; value: string }>,
-  ) {
-    const row = this.createFieldShell(label, description);
 
-    const selectWrap = document.createElement("div");
-    selectWrap.className = "strata-settings__select-wrap";
-
-    const input = document.createElement("input");
-    input.type = "hidden";
-    input.name = String(name);
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "strata-settings__select";
-    button.dataset.selectButtonFor = String(name);
-    button.style.cursor = this.pointerCursor;
-
-    const valueLabel = document.createElement("span");
-    valueLabel.className = "strata-settings__select-value";
-    valueLabel.dataset.selectValueFor = String(name);
-
-    const arrow = document.createElement("span");
-    arrow.className = "strata-settings__select-arrow";
-    arrow.textContent = "v";
-
-    button.append(valueLabel, arrow);
-
-    const menu = document.createElement("div");
-    menu.className = "strata-settings__select-menu";
-    menu.dataset.selectMenuFor = String(name);
-
-    for (const option of options) {
-      const optionButton = document.createElement("button");
-      optionButton.type = "button";
-      optionButton.className = "strata-settings__select-option";
-      optionButton.dataset.value = option.value;
-      optionButton.textContent = option.label;
-      optionButton.style.cursor = this.pointerCursor;
-      optionButton.addEventListener("click", () => {
-        input.value = option.value;
-        valueLabel.textContent = option.label;
-        button.dataset.value = option.value;
-        this.updateDropdownSelection(String(name));
-        this.closeDropdowns();
-      });
-      menu.appendChild(optionButton);
-    }
-
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const isOpen = selectWrap.dataset.open === "true";
-      this.closeDropdowns();
-      selectWrap.dataset.open = isOpen ? "false" : "true";
-    });
-
-    selectWrap.append(input, button, menu);
-    row.control.appendChild(selectWrap);
-    return row.element;
-  }
 
   private createFieldShell(label: string, description: string) {
     const element = document.createElement("div");

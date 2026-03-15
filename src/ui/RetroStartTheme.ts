@@ -213,6 +213,66 @@ export function ensureRetroGuiTheme() {
       flex: 1;
       min-width: 0;
     }
+
+    .retro-settings-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(224, 240, 213, 0.1);
+    }
+
+    .retro-settings-label {
+      flex: 1;
+      font-size: 16px;
+      color: rgba(224, 240, 213, 0.7);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      white-space: nowrap;
+    }
+
+    .retro-settings-value {
+      font-size: 16px;
+      color: #e0f0d5;
+      min-width: 48px;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .retro-settings-row .retro-btn--acc {
+      width: auto;
+      flex: 0 0 auto;
+      min-width: 52px;
+    }
+
+    .retro-range {
+      appearance: none;
+      -webkit-appearance: none;
+      background: rgba(224, 240, 213, 0.15);
+      height: 6px;
+      width: 100px;
+      outline: none;
+      border: 1px solid rgba(224, 240, 213, 0.3);
+    }
+
+    .retro-range::-webkit-slider-thumb {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 10px;
+      height: 16px;
+      background: #e0f0d5;
+      cursor: pointer;
+      border: none;
+    }
+
+    .retro-range::-moz-range-thumb {
+      width: 10px;
+      height: 16px;
+      background: #e0f0d5;
+      cursor: pointer;
+      border: none;
+      border-radius: 0;
+    }
   `;
   document.head.appendChild(styleTag);
   return styleTag;

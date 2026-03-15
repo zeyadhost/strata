@@ -1,12 +1,12 @@
 import Phaser from "phaser";
 import { ProceduralAudioManager } from "../ProceduralAudioManager";
-import { createEmptyInventoryState, INVENTORY_KEYS, InventoryKey, InventoryState, OreCollectedPayload, OreDropPayload, PlayerUpdatePayload, TileDestroyedPayload, TileType, WorldInitPayload } from "../types";
+import { createEmptyInventoryState, INVENTORY_KEYS, InventoryKey, InventoryState, OreCollectedPayload, OreDropPayload, TileType, WorldInitPayload } from "../types";
 import { loadSettings, saveSettings, type GameSettings } from "../settings";
 import { InventoryPanel } from "../ui/InventoryPanel";
 import { HotbarPanel, type HotbarSlotKey } from "../ui/HotbarPanel";
 import { SettingsMenu } from "../ui/SettingsMenu";
 import { DEFAULT_PRIMARY_PICKAXE, PICKAXE_DEFINITIONS, PICKAXE_LIST, type PickaxeId } from "../constants/pickaxes";
-import { NetworkManager } from "../network/NetworkManager";
+
 import { ShopPanel } from "../ui/ShopPanel";
 import { StorageManager } from "../state/StorageManager";
 import {
@@ -215,15 +215,6 @@ function gemAssetPath(item: InventoryKey) {
   return `gems/${item}.png`;
 }
 
-interface RemotePlayer {
-  id: string;
-  sprite: Phaser.GameObjects.Sprite;
-  pickaxeSprite: Phaser.GameObjects.Image;
-  accessorySprite: Phaser.GameObjects.Image;
-  facingLeft: boolean;
-  activeHotbarSlot: string;
-}
-
 export class GameScene extends Phaser.Scene {
   private tiles: number[][] = [];
   private spawnX = 0;
@@ -234,7 +225,6 @@ export class GameScene extends Phaser.Scene {
   private saveData: any = null;
 
   private player!: Phaser.GameObjects.Sprite;
-  private remotePlayers = new Map<string, RemotePlayer>();
   private settingsMenu!: SettingsMenu;
   private audioManager!: ProceduralAudioManager;
 
@@ -255,8 +245,7 @@ export class GameScene extends Phaser.Scene {
   private wasGrounded = false;
   private loadingText!: Phaser.GameObjects.Text;
   private coordsText!: HTMLDivElement;
-  private lobbyCodeText!: HTMLDivElement;
-  private networkManager: NetworkManager | null = null;
+
   private inventoryPanel!: InventoryPanel;
   private shopPanel!: ShopPanel;
   private hotbarPanel!: HotbarPanel;
@@ -278,10 +267,10 @@ export class GameScene extends Phaser.Scene {
     super({ key: "GameScene" });
   }
 
-  init(data: { worldInit: WorldInitPayload | null; isHost: boolean; networkManager: NetworkManager; saveData: any }) {
-    this.pendingInit = data.worldInit ?? null;
-    this.networkManager = data.networkManager;
+  init(data: { worldInit: WorldInitPayload; saveData: any }) {
+    this.pendingInit = data.worldInit;
     this.saveData = data.saveData;
+    this.settings = loadSettings();
   }
 
   preload() {
@@ -304,7 +293,9 @@ export class GameScene extends Phaser.Scene {
     for (const p of PICKAXE_LIST) {
       this.load.image(`pickaxe_tex_${p.id}`, p.texture);
     }
-    this.load.image("accessory_miner_hat", "accessory/miner_hat.png");
+    this.load.image("accessory_miner_hat",      "accessory/miner_hat.png");
+    this.load.image("accessory_miner_cap",      "accessory/miner_cap.png");
+    this.load.image("accessory_miner_headlamp", "accessory/miner_headlamp.png");
   }
 
   create() {
@@ -356,63 +347,43 @@ export class GameScene extends Phaser.Scene {
     coordsLine.className = "coords-line";
     this.coordsText.appendChild(coordsLine);
 
-    this.lobbyCodeText = document.createElement("div");
-    this.lobbyCodeText.className = "strata-lobby-code";
-    Object.assign(this.lobbyCodeText.style, {
+    const coinsLine = document.createElement("div");
+    coinsLine.className = "coins-line";
+    coinsLine.style.color = "#f4d679";
+    this.coordsText.appendChild(coinsLine);
+
+    const shopBtn = document.createElement("button");
+    shopBtn.className = "strata-shop-launcher";
+    shopBtn.innerHTML = `<img src="settings-icons/game.png" alt="Shop" width="16" height="16" style="display:block;image-rendering:pixelated" /><span>Shop</span>`;
+    Object.assign(shopBtn.style, {
+      position: "fixed",
+      top: "66px",
+      right: "14px",
+      zIndex: "1000",
       pointerEvents: "auto",
-      cursor: "pointer",
-      color: "#00ff88",
-      display: "none",
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "8px",
+      padding: "10px 14px",
+      minHeight: "42px",
+      border: "0",
+      background: "linear-gradient(180deg, #253c74 0%, #162454 100%)",
+      color: "#efe4b9",
+      boxShadow: "inset 0 0 0 2px #314c92, inset 0 0 0 4px #0b1531, 0 0 0 2px #e9ddb7, 0 0 0 4px #091127, 0 6px 0 #070d1d",
+      textTransform: "uppercase",
+      fontFamily: "monogram, monospace",
+      fontSize: "20px",
+      lineHeight: "1",
+      letterSpacing: "0.06em",
+      cursor: "url('cursors/pointer-24.png') 1 1, pointer",
     } satisfies Partial<CSSStyleDeclaration>);
-    this.lobbyCodeText.title = "Click to copy invite code";
-    this.lobbyCodeText.onclick = () => {
-      if (this.networkManager?.lobbyCode) {
-        navigator.clipboard.writeText(this.networkManager.lobbyCode);
-        const oldText = this.lobbyCodeText.innerText;
-        this.lobbyCodeText.innerText = "LOBBY: COPIED!";
-        setTimeout(() => (this.lobbyCodeText.innerText = oldText), 1000);
-      }
-    };
-    this.coordsText.appendChild(this.lobbyCodeText);
+    shopBtn.addEventListener("click", () => {
+      if (this.shopPanel.isOpen()) this.shopPanel.close();
+      else this.shopPanel.open(this.saveData);
+    });
+    document.body.appendChild(shopBtn);
 
-    if (this.networkManager) {
-      if (this.networkManager.lobbyCode) {
-        this.lobbyCodeText.innerText = `LOBBY: ${this.networkManager.lobbyCode}`;
-        this.lobbyCodeText.style.display = "block";
-        this.coordsText.style.display = "flex";
-      }
-
-      this.networkManager.onConnect((peerId) => {
-        if (!this.networkManager?.isHost()) {
-          this.networkManager?.send("CLIENT_READY", { saveData: this.saveData }, peerId);
-        }
-      });
-
-      this.networkManager.onData((payload, fromId) => {
-        if (payload.type === "CLIENT_READY") {
-          if (this.networkManager?.isHost() && this.worldReady) {
-            this.networkManager.send("WORLD_INIT", {
-              tiles: this.tiles,
-              spawnX: this.spawnX,
-              spawnY: this.spawnY,
-              players: [], 
-              inventory: createEmptyInventoryState(),
-            }, fromId);
-          }
-        } else if (payload.type === "WORLD_INIT") {
-          this.applyWorldInit(payload.data);
-        } else if (payload.type === "PLAYER_UPDATE") {
-          this.updateRemotePlayer(payload.data as PlayerUpdatePayload);
-        } else if (payload.type === "TILE_DESTROYED") {
-          const { tx, ty } = payload.data as TileDestroyedPayload;
-          this.remoteTileDestroyed(tx, ty);
-        }
-      });
-
-      if (!this.networkManager.isHost()) {
-        setTimeout(() => { if (!this.worldReady) this.networkManager?.send("CLIENT_READY", {}, this.networkManager.lobbyCode!); }, 500);
-      }
-    }
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => shopBtn.remove());
 
     this.breakEffect = this.add.image(0, 0, BREAK_TEXTURE_KEY, breakFrameKey(0));
     this.breakEffect.setOrigin(0).setDepth(BREAK_EFFECT_DEPTH).setAlpha(0.9).setVisible(false);
@@ -546,7 +517,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private applyWorldInit(payload: WorldInitPayload) {
-    console.log("[GameScene] Applying world initialization");
     this.tiles = payload.tiles;
     this.spawnX = payload.spawnX;
     this.spawnY = payload.spawnY;
@@ -703,8 +673,10 @@ export class GameScene extends Phaser.Scene {
 
   private initAccessory() {
     this.accessorySprite?.destroy();
-    this.accessorySprite = this.add.image(this.player.x, this.player.y, "accessory_miner_hat");
-    this.accessorySprite.setDepth(11).setVisible(true);
+    const textureKey = this.saveData?.equippedAccessory || "";
+    const hasAccessory = !!textureKey && textureKey !== "none" && this.textures.exists(textureKey);
+    this.accessorySprite = this.add.image(this.player.x, this.player.y, hasAccessory ? textureKey : "accessory_miner_hat");
+    this.accessorySprite.setDepth(11).setVisible(hasAccessory);
   }
 
   private updateAccessory() {
@@ -844,60 +816,6 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private broadcastLocalState() {
-    if (!this.networkManager || !this.player) return;
-    this.networkManager.send("PLAYER_UPDATE", { id: this.networkManager.lobbyCode || "local", x: this.player.x, y: this.player.y, anim: this.player.anims.currentAnim?.key || PLAYER_ANIM_IDLE, facingLeft: this.facingLeft, activeHotbarSlot: this.activeHotbarSlot } as PlayerUpdatePayload);
-  }
-
-  private createRemotePlayer(id: string) {
-    if (this.remotePlayers.has(id)) return;
-    const sprite = this.add.sprite(0, 0, "tex_player_idle").setDepth(10).setOrigin(0.5, 1.0);
-    const pickaxeSprite = this.add.image(0, 0, PICKAXE_TEXTURE_KEY).setDisplaySize(PICKAXE_SIZE, PICKAXE_SIZE).setDepth(PICKAXE_DEPTH).setOrigin(0.75, 0.75);
-    const accessorySprite = this.add.image(0, 0, "accessory_miner_hat").setDepth(11);
-    this.remotePlayers.set(id, { id, sprite, pickaxeSprite, accessorySprite, facingLeft: false, activeHotbarSlot: "main-pickaxe" });
-  }
-
-  private updateRemotePlayer(payload: PlayerUpdatePayload) {
-    if (!this.remotePlayers.has(payload.id)) this.createRemotePlayer(payload.id);
-    const rp = this.remotePlayers.get(payload.id)!;
-    rp.sprite.setPosition(payload.x, payload.y).setFlipX(payload.facingLeft);
-    rp.facingLeft = payload.facingLeft; rp.activeHotbarSlot = payload.activeHotbarSlot;
-    if (rp.sprite.anims.currentAnim?.key !== payload.anim) rp.sprite.play(payload.anim, true);
-    this.updateRemotePlayerEquipment(rp);
-  }
-
-  private updateRemotePlayerEquipment(rp: RemotePlayer) {
-    const hasP = rp.activeHotbarSlot === "main-pickaxe"; rp.pickaxeSprite.setVisible(hasP);
-    if (hasP) {
-      const anim = rp.sprite.anims.currentAnim?.key, frame = rp.sprite.anims.currentFrame?.index || 1;
-      let t: PickaxeTransform = { x: PICKAXE_OFFSET_X, y: PICKAXE_OFFSET_Y, angle: PICKAXE_IDLE_ANGLE };
-      if (anim === PLAYER_ANIM_MINE) t = MINE_ANIM_OFFSETS[frame] || t;
-      else if (anim === PLAYER_ANIM_WALK) t = WALK_ANIM_OFFSETS[frame] || t;
-      else if (anim === PLAYER_ANIM_IDLE) t = IDLE_ANIM_OFFSETS[frame] || t;
-      else if (anim === PLAYER_ANIM_JUMP) t = JUMP_ANIM_OFFSETS[frame] || t;
-      else if (anim === PLAYER_ANIM_FALL) t = FALL_ANIM_OFFSETS[frame] || t;
-      rp.pickaxeSprite.setPosition(rp.sprite.x + (rp.facingLeft ? -t.x : t.x), rp.sprite.y + t.y).setAngle(rp.facingLeft ? -t.angle : t.angle);
-      rp.pickaxeSprite.scaleX = (rp.facingLeft ? -1 : 1) * this.pickaxeBaseScale;
-    }
-    const anim = rp.sprite.anims.currentAnim?.key, frame = rp.sprite.anims.currentFrame?.index || 1;
-    let t = ACCESSORY_IDLE_OFFSETS[frame] || ACCESSORY_IDLE_OFFSETS[1];
-    if (anim === PLAYER_ANIM_MINE) t = ACCESSORY_MINE_OFFSETS[frame] || t;
-    else if (anim === PLAYER_ANIM_WALK) t = ACCESSORY_WALK_OFFSETS[frame] || t;
-    else if (anim === PLAYER_ANIM_JUMP) t = ACCESSORY_JUMP_OFFSETS[frame] || t;
-    else if (anim === PLAYER_ANIM_FALL) t = ACCESSORY_FALL_OFFSETS[frame] || t;
-    rp.accessorySprite.setPosition(rp.sprite.x + (rp.facingLeft ? -t.x : t.x), rp.sprite.y + t.y).setDisplaySize(t.width, t.height).setOrigin(t.originX, t.originY).setAngle(rp.facingLeft ? -t.angle : t.angle);
-    rp.accessorySprite.scaleX = Math.abs(rp.accessorySprite.scaleX) * (rp.facingLeft ? -1 : 1);
-  }
-
-  private remoteTileDestroyed(tx: number, ty: number) {
-    if (this.tiles[ty]?.[tx] !== TileType.AIR) {
-      const type = this.tiles[ty][tx] as TileType; this.tiles[ty][tx] = TileType.AIR;
-      this.invalidateTileNeighborhood(tx, ty); this.lastViewLeft = -999;
-      const key = this.getInventoryKeyForTile(type);
-      if (key) this.spawnOreDrop({ dropId: `remote-${tx}-${ty}-${Date.now()}`, item: key, x: tx, y: ty });
-    }
-  }
-
   private updateBreaking(delta: number) {
     if (!this.breakTarget) return;
     this.breakElapsedMs += delta;
@@ -917,7 +835,6 @@ export class GameScene extends Phaser.Scene {
       this.tiles[ty][tx] = TileType.AIR;
       this.invalidateTileNeighborhood(tx, ty);
       this.lastViewLeft = -999;
-      this.networkManager?.send("TILE_DESTROYED", { tx, ty } as TileDestroyedPayload);
       const invKey = this.getInventoryKeyForTile(target.type);
       if (invKey) this.spawnOreDrop({ dropId: `drop-${this.nextOreDropId++}`, item: invKey, x: tx, y: ty });
     }
@@ -927,7 +844,6 @@ export class GameScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     if (!this.worldReady || !this.player) return;
-    this.broadcastLocalState();
     const body = this.player.body as Phaser.Physics.Arcade.Body, grounded = body.blocked.down || body.touching.down;
     this.updateOreDrops(delta);
     if (this.settingsMenu.isOpen() || this.inventoryPanel.isOpen() || this.shopPanel.isOpen()) {
@@ -972,6 +888,8 @@ export class GameScene extends Phaser.Scene {
     if (!this.player || !this.settings.showCoordinates) return;
     const tx = Math.floor(this.player.x / TILE_SIZE), ty = Math.floor(this.player.y / TILE_SIZE), cl = this.coordsText.querySelector(".coords-line");
     if (cl) cl.textContent = `X ${tx}  Y ${ty}  DEPTH ${ty}`;
+    const coins = this.coordsText.querySelector(".coins-line");
+    if (coins) coins.textContent = `$ ${this.saveData.coins}`;
   }
 
   private getSurfaceTileForMusic(grounded: boolean) {

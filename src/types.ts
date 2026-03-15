@@ -61,32 +61,11 @@ export interface OreCollectedPayload {
   y: number;
 }
 
-export interface PlayerUpdatePayload {
-  id: string;
-  x: number;
-  y: number;
-  anim: string;
-  facingLeft: boolean;
-  activeHotbarSlot: string;
-}
-
-export interface TileDestroyedPayload {
-  tx: number;
-  ty: number;
-}
-
-export interface PlayerState {
-  id: string;
-  x: number;
-  y: number;
-  flipX: boolean;
-}
 
 export interface WorldInitPayload {
   tiles: number[][];
   spawnX: number;
   spawnY: number;
-  players: PlayerState[];
   inventory: InventoryState;
 }
 

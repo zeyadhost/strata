@@ -43,10 +43,20 @@
     "id": "diamond-pickaxe",
     "name": "Diamond Pickaxe",
     "shortName": "Diamond Pick",
-    "description": "Top-tier pick with the fastest break speed for every ore.",
+    "description": "Top-tier precision pick with the fastest break speed.",
     "tier": 5,
     "miningSpeed": 1.75,
     "oreAccess": ["coal", "copper", "iron", "silver", "gold", "emerald", "sapphire", "diamond"],
     "texture": "pickaxes/diamond_pickaxe.png"
+  },
+  {
+    "id": "flaming-pickaxe",
+    "name": "Flaming Pickaxe",
+    "shortName": "Flame Pick",
+    "description": "Burns through any ore at blistering speed. The ultimate tool.",
+    "tier": 6,
+    "miningSpeed": 2.2,
+    "oreAccess": ["coal", "copper", "iron", "silver", "gold", "emerald", "sapphire", "diamond"],
+    "texture": "pickaxes/flaming.gif"
   }
 ]

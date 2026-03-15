@@ -1,13 +1,9 @@
 import Phaser from "phaser";
-import { FONTS } from "../constants/fonts";
 import { findSpawn, generateWorld } from "../world/worldGen";
-import { NetworkManager } from "../network/NetworkManager";
+import { ensureRetroGuiTheme, destroyRetroGuiThemeIfUnused } from "../ui/RetroStartTheme";
 
 export class BootScene extends Phaser.Scene {
-  private statusText!: Phaser.GameObjects.Text;
-  private networkManager: NetworkManager | null = null;
-
-  private initData!: { isHost: boolean; lobbyCode?: string; saveData: any; isOffline?: boolean };
+  private initData!: { saveData: any };
 
   constructor() {
     super({ key: "BootScene" });
@@ -17,102 +13,50 @@ export class BootScene extends Phaser.Scene {
     this.initData = data;
   }
 
-  async create() {
+  create() {
+    ensureRetroGuiTheme();
+    this.cameras.main.setBackgroundColor("#1a1c19");
     this.input.setDefaultCursor("url('cursors/pointer-24.png') 1 1, auto");
 
-    this.add
-      .text(this.scale.width / 2, this.scale.height / 2 - 60, "STRATA", { fontFamily: FONTS.header, fontSize: "48px", color: "#e0e0e0" })
-      .setOrigin(0.5);
+    const container = document.createElement("div");
+    container.className = "retro-gui";
+    document.body.appendChild(container);
 
-    this.statusText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2 + 20, "Connecting to network...", { fontFamily: FONTS.body, fontSize: "18px", color: "#888888" })
-      .setOrigin(0.5);
+    const panel = document.createElement("div");
+    panel.className = "retro-panel";
+    panel.style.textAlign = "center";
 
-    this.networkManager = new NetworkManager();
+    const title = document.createElement("div");
+    title.className = "retro-title";
+    title.textContent = "STRATA";
 
-    try {
-      if (this.initData.isOffline) {
-        this.statusText.setText(`Initializing single-player mode...`);
-        this.statusText.setText(`Generating world...`);
-        const seed = Math.floor(Math.random() * 0xffffff);
-        const tiles = generateWorld(seed);
-        const spawn = findSpawn(tiles);
-        this.statusText.setText(`World ready (seed ${seed})`);
-        this.statusText.setColor("#00ff88");
+    const status = document.createElement("div");
+    status.className = "retro-label retro-label--center";
+    status.textContent = "GENERATING WORLD...";
 
-        this.time.delayedCall(150, () => {
-          this.scene.start("GameScene", {
-            worldInit: {
-              tiles,
-              spawnX: spawn.spawnX,
-              spawnY: spawn.spawnY,
-              players: [],
-              inventory: this.initData.saveData.inventory,
-            },
-            isHost: true,
-            networkManager: this.networkManager,
-            saveData: this.initData.saveData,
-            isOffline: true,
-          });
-        });
+    panel.appendChild(title);
+    panel.appendChild(status);
+    container.appendChild(panel);
 
-      } else if (this.initData.isHost) {
-        this.statusText.setText(`Initializing Host...`);
-        await this.networkManager.initialize(true);
-        
-        this.statusText.setText(`Generating world...`);
-        const seed = Math.floor(Math.random() * 0xffffff);
-        const tiles = generateWorld(seed);
-        const spawn = findSpawn(tiles);
-        this.statusText.setText(`World ready (seed ${seed})`);
-        this.statusText.setColor("#00ff88");
+    requestAnimationFrame(() => {
+      const seed = Math.floor(Math.random() * 0xffffff);
+      const tiles = generateWorld(seed);
+      const spawn = findSpawn(tiles);
+      status.textContent = `WORLD READY`;
 
-        this.time.delayedCall(150, () => {
-          this.scene.start("GameScene", {
-            worldInit: {
-              tiles,
-              spawnX: spawn.spawnX,
-              spawnY: spawn.spawnY,
-              players: [],
-              inventory: this.initData.saveData.inventory,
-            },
-            isHost: true,
-            networkManager: this.networkManager,
-            saveData: this.initData.saveData,
-            isOffline: false,
-          });
-        });
-      } else {
-        this.statusText.setText(`Joining Lobby: ${this.initData.lobbyCode}...`);
-        this.statusText.setColor("#00bbff");
-        
-        await this.networkManager.initialize(false, this.initData.lobbyCode);
-        
-        this.statusText.setText(`Connected! Waiting for world data...`);
+      setTimeout(() => {
+        container.remove();
+        destroyRetroGuiThemeIfUnused();
         this.scene.start("GameScene", {
-          worldInit: null,
-          isHost: false,
-          networkManager: this.networkManager,
+          worldInit: {
+            tiles,
+            spawnX: spawn.spawnX,
+            spawnY: spawn.spawnY,
+            inventory: this.initData.saveData.inventory,
+          },
           saveData: this.initData.saveData,
-          isOffline: false,
         });
-      }
-    } catch (err) {
-      console.error("Failed to initialize network:", err);
-      this.statusText.setText(`Error: ${err instanceof Error ? err.message : String(err)}`);
-      this.statusText.setColor("#ff4444");
-      
-      const retryBtn = document.createElement("button");
-      retryBtn.innerText = "Back to Menu";
-      retryBtn.style.position = "fixed";
-      retryBtn.style.top = "60%";
-      retryBtn.style.left = "50%";
-      retryBtn.style.transform = "translateX(-50%)";
-      retryBtn.onclick = () => {
-        retryBtn.remove();
-        this.scene.start("StartScene");
-      };
-      document.body.appendChild(retryBtn);
-    }
+      }, 300);
+    });
   }
 }

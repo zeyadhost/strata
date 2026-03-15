@@ -6,8 +6,7 @@ export class StorageManager {
   static save(data: PlayerSaveData) {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch (e) {
-      console.error("Failed to save game data", e);
+    } catch {
     }
   }
 
@@ -17,8 +16,7 @@ export class StorageManager {
       if (raw) {
         return JSON.parse(raw) as PlayerSaveData;
       }
-    } catch (e) {
-      console.error("Failed to load game data", e);
+    } catch {
     }
     return null;
   }
