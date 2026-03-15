@@ -407,7 +407,7 @@ export class SettingsMenu {
       masterVolume: this.readNumber("masterVolume"),
       ambienceVolume: this.readNumber("ambienceVolume"),
       sfxVolume: this.readNumber("sfxVolume"),
-      outputMode: this.readSelect("outputMode") as GameSettings["outputMode"],
+      outputMode: "stereo", // default value since UI was removed
       fov: this.readNumber("fov"),
       pixelSnap: this.readToggle("pixelSnap"),
       holdToMine: this.readToggle("holdToMine"),
@@ -417,10 +417,6 @@ export class SettingsMenu {
 
   private readNumber(name: string) {
     return Number((this.contentArea.querySelector(`[name='${name}']`) as HTMLInputElement).value);
-  }
-
-  private readSelect(name: string) {
-    return (this.contentArea.querySelector(`[name='${name}']`) as HTMLSelectElement).value;
   }
 
   private readToggle(name: string) {
