@@ -61,6 +61,20 @@ export interface OreCollectedPayload {
   y: number;
 }
 
+export interface PlayerUpdatePayload {
+  id: string;
+  x: number;
+  y: number;
+  anim: string;
+  facingLeft: boolean;
+  activeHotbarSlot: string;
+}
+
+export interface TileDestroyedPayload {
+  tx: number;
+  ty: number;
+}
+
 export interface PlayerState {
   id: string;
   x: number;
@@ -74,4 +88,15 @@ export interface WorldInitPayload {
   spawnY: number;
   players: PlayerState[];
   inventory: InventoryState;
+}
+
+export interface PlayerSaveData {
+  username: string;
+  tag: string;
+  inventory: InventoryState;
+  coins: number;
+  unlockedPickaxes: string[];
+  equippedPickaxe: string;
+  equippedAccessory: string;
+  coords: { x: number; y: number } | null;
 }

@@ -9,6 +9,7 @@ type InventoryPanelLayout = {
 
 type InventoryPanelOptions = {
   onVisibilityChange?: (isOpen: boolean) => void;
+  onSellOres?: () => void;
 };
 
 const INVENTORY_ROWS: InventoryKey[] = [...INVENTORY_KEYS];
@@ -28,10 +29,12 @@ export class InventoryPanel {
   private readonly itemSlots = new Map<InventoryKey, HTMLDivElement>();
   private isPanelOpen = false;
   private readonly onVisibilityChange?: (isOpen: boolean) => void;
+  private readonly onSellOres?: () => void;
 
   constructor(options: InventoryPanelOptions = {}) {
     ensureStrataGuiTheme();
     this.onVisibilityChange = options.onVisibilityChange;
+    this.onSellOres = options.onSellOres;
 
     this.root = document.createElement("div");
     this.root.className = "strata-gui strata-gui--modal strata-inventory";
@@ -88,9 +91,34 @@ export class InventoryPanel {
       this.itemSlots.set(key, slot);
     }
 
+    const footer = document.createElement("div");
+    footer.className = "strata-gui__footer";
+    footer.style.display = "flex";
+    footer.style.justifyContent = "center";
+    footer.style.padding = "10px";
+    footer.style.borderTop = "2px solid #203867";
+
+    const sellButton = document.createElement("button");
+    sellButton.type = "button";
+    sellButton.className = "strata-gui__slot";
+    sellButton.style.width = "auto";
+    sellButton.style.minHeight = "40px";
+    sellButton.style.padding = "8px 16px";
+    sellButton.style.textAlign = "center";
+    sellButton.style.cursor = "pointer";
+    sellButton.style.fontFamily = "monogram, monospace";
+    sellButton.style.fontSize = "20px";
+    sellButton.style.color = "#f4d679";
+    sellButton.textContent = "Sell All Ores";
+    sellButton.addEventListener("click", () => {
+      this.onSellOres?.();
+    });
+
+    footer.appendChild(sellButton);
+
     titleWrap.append(title);
     header.append(titleWrap, closeButton);
-    this.panel.append(header, body);
+    this.panel.append(header, body, footer);
     this.root.appendChild(this.panel);
     document.body.appendChild(this.root);
     this.close();
